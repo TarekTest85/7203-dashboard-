@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>7203 Elm Co. — Tadawul Trend Dashboard</title>
+<link rel="stylesheet" href="style.css" />
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="ticker">7203.SR</span>
+    <span class="name">Elm Company &mdash; شركة علم</span>
+    <span class="market">Tadawul · Saudi Stock Exchange</span>
+  </div>
+  <div class="quote">
+    <span id="lastPrice" class="price">&mdash;</span>
+    <span id="lastChange" class="change">&mdash;</span>
+    <span id="lastDate" class="date">&mdash;</span>
+  </div>
+</header>
+
+<main>
+  <section class="card chart-card">
+    <div class="card-head">
+      <h2>Price &amp; Indicators</h2>
+      <div class="legend">
+        <span class="dot dot-price"></span>Close
+        <span class="dot dot-sma20"></span>SMA(20)
+        <span class="dot dot-sma50"></span>SMA(50)
+      </div>
+    </div>
+    <canvas id="priceChart" height="120"></canvas>
+  </section>
+
+  <section class="grid">
+    <div class="card">
+      <h3>RSI(14)</h3>
+      <canvas id="rsiChart" height="80"></canvas>
+      <p id="rsiNote" class="muted">&mdash;</p>
+    </div>
+    <div class="card">
+      <h3>MACD(12,26,9)</h3>
+      <canvas id="macdChart" height="80"></canvas>
+      <p id="macdNote" class="muted">&mdash;</p>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Detected Chart Patterns</h2>
+    <p class="muted small">
+      Detection follows Thomas N. Bulkowski's <em>Visual Guide to Chart Patterns</em>
+      definitions for Head &amp; Shoulders, Double Top/Bottom, Triangles
+      (ascending, descending, symmetrical), Flags, Wedges and Cup-with-Handle.
+    </p>
+    <div id="patternList" class="patterns"></div>
+  </section>
+
+  <section class="card forecast-card">
+    <h2>Next-Week Trend Forecast</h2>
+    <div class="forecast">
+      <div id="trendBadge" class="badge">&mdash;</div>
+      <div class="forecast-body">
+        <div class="forecast-row">
+          <span>Projected close in 5 sessions</span>
+          <strong id="targetPrice">&mdash;</strong>
+        </div>
+        <div class="forecast-row">
+          <span>Expected range</span>
+          <strong id="targetRange">&mdash;</strong>
+        </div>
+        <div class="forecast-row">
+          <span>Confidence</span>
+          <strong id="confidence">&mdash;</strong>
+        </div>
+        <p id="rationale" class="rationale"></p>
+      </div>
+    </div>
+    <p class="disclaimer">
+      Educational dashboard. Pattern probabilities are taken from Bulkowski's
+      published statistics; this is not investment advice.
+    </p>
+  </section>
+</main>
+
+<script src="data.js"></script>
+<script src="indicators.js"></script>
+<script src="patterns.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
