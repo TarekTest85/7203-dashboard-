@@ -29,8 +29,15 @@
 
     var srcEl = document.getElementById("dataSource");
     srcEl.classList.remove("live", "fallback");
-    if (source === "live") { srcEl.textContent = "live"; srcEl.classList.add("live"); }
-    else { srcEl.textContent = "demo"; srcEl.classList.add("fallback"); }
+    if (source === "live") {
+      srcEl.textContent = "live · " + last.date;
+      srcEl.classList.add("live");
+      srcEl.title = "Live data from Yahoo Finance (last close " + last.date + ")";
+    } else {
+      srcEl.textContent = "demo · " + last.date;
+      srcEl.classList.add("fallback");
+      srcEl.title = "Live fetch unavailable. Showing fallback anchored to verified Tadawul close on " + last.date + ".";
+    }
 
     // Charts
     if (chartRefs.price) chartRefs.price.destroy();

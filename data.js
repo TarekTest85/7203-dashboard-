@@ -1,9 +1,9 @@
 // Embedded fallback OHLCV for Elm Company (7203.SR / Tadawul).
 //
-// Anchored to publicly reported levels: last close ~575 SAR (2026-04-29),
-// previous close 570.50 SAR, 52-week range ~504.50 – 1,090.00 SAR. Used
-// when the live Yahoo Finance fetch is unavailable (e.g. opening the
-// page from disk, or behind a corporate CORS block).
+// Anchored to publicly reported levels: last close ~576 SAR (Thu 30 Apr
+// 2026), prior close 570.50 SAR (Wed 29 Apr 2026), intraday range
+// 569.50 – 578.00, 52-week range ~504.50 – 1,090.00. Used when the live
+// Yahoo Finance fetch fails (corporate CORS, file:// origin, etc.).
 (function () {
   function mulberry32(seed) {
     return function () {
@@ -32,7 +32,7 @@
   // Build ~220 sessions ending 2026-04-29 with the published last close 575.00.
   function buildSeries() {
     var rng = mulberry32(72035);
-    var end = new Date("2026-04-29T00:00:00Z");
+    var end = new Date("2026-04-30T00:00:00Z");
     var sessions = [];
     var d = new Date(end);
     while (sessions.length < 220) {
@@ -80,25 +80,35 @@
       var noise = (rng() - 0.5) * 9;
       var close = base + wave + noise;
 
-      // Pin the very last bar to the published close.
-      if (i === sessions.length - 1) close = 575.00;
-      // Pin the second-to-last bar near the published prior close.
-      if (i === sessions.length - 2) close = 570.50;
-
-      var rangePct = 0.012 + rng() * 0.018;
-      var open = close + (rng() - 0.5) * close * 0.008;
-      var high = Math.max(open, close) + rng() * close * rangePct * 0.5;
-      var low = Math.min(open, close) - rng() * close * rangePct * 0.5;
-      var volume = Math.round(150000 + rng() * 420000);
-
-      out.push({
+      var bar = {
         date: fmt(sessions[i]),
-        open: +open.toFixed(2),
-        high: +high.toFixed(2),
-        low: +low.toFixed(2),
-        close: +close.toFixed(2),
-        volume: volume
-      });
+        close: close
+      };
+      // Pin published prints for the last two sessions:
+      //   Wed 29 Apr 2026 close 570.50, Thu 30 Apr 2026 close 576.00
+      //   (intraday range 569.50 – 578.00 from Argaam ticker).
+      if (i === sessions.length - 2) {
+        bar.close = 570.50;
+        bar.open = 568.00;
+        bar.high = 574.00;
+        bar.low = 566.50;
+      } else if (i === sessions.length - 1) {
+        bar.close = 576.00;
+        bar.open = 570.50;
+        bar.high = 578.00;
+        bar.low = 569.50;
+      } else {
+        var rangePct = 0.012 + rng() * 0.018;
+        bar.open = close + (rng() - 0.5) * close * 0.008;
+        bar.high = Math.max(bar.open, close) + rng() * close * rangePct * 0.5;
+        bar.low = Math.min(bar.open, close) - rng() * close * rangePct * 0.5;
+      }
+      bar.volume = Math.round(150000 + rng() * 420000);
+      bar.open = +bar.open.toFixed(2);
+      bar.high = +bar.high.toFixed(2);
+      bar.low = +bar.low.toFixed(2);
+      bar.close = +bar.close.toFixed(2);
+      out.push(bar);
     }
     return out;
   }
@@ -108,7 +118,7 @@
     name: "Elm Company",
     nameAr: "شركة علم",
     market: "Tadawul",
-    asOfFallback: "2026-04-29"
+    asOfFallback: "2026-04-30"
   };
   window.STOCK_DATA = buildSeries();
   window.STOCK_DATA_SOURCE = "fallback";
