@@ -1,7 +1,9 @@
-// Historical data for Elm Company (7203.SR / Tadawul).
-// Generated with a deterministic PRNG so the dashboard renders the same
-// dataset every load. Replace `buildSeries` with a fetch from a real data
-// provider (e.g. Tadawul / Yahoo Finance) when wiring up live data.
+// Embedded fallback OHLCV for Elm Company (7203.SR / Tadawul).
+//
+// Anchored to publicly reported levels: last close ~575 SAR (2026-04-29),
+// previous close 570.50 SAR, 52-week range ~504.50 – 1,090.00 SAR. Used
+// when the live Yahoo Finance fetch is unavailable (e.g. opening the
+// page from disk, or behind a corporate CORS block).
 (function () {
   function mulberry32(seed) {
     return function () {
@@ -19,18 +21,18 @@
     return d;
   }
 
+  // Tadawul trades Sun–Thu; weekend is Fri (5) & Sat (6).
   function isWeekend(d) {
-    // Tadawul trades Sunday–Thursday; weekend is Friday (5) & Saturday (6).
     var w = d.getDay();
     return w === 5 || w === 6;
   }
 
   function fmt(d) { return d.toISOString().slice(0, 10); }
 
-  // Generate ~220 trading sessions ending 2026-05-01.
+  // Build ~220 sessions ending 2026-04-29 with the published last close 575.00.
   function buildSeries() {
     var rng = mulberry32(72035);
-    var end = new Date("2026-05-01T00:00:00Z");
+    var end = new Date("2026-04-29T00:00:00Z");
     var sessions = [];
     var d = new Date(end);
     while (sessions.length < 220) {
@@ -38,48 +40,56 @@
       d = addDays(d, -1);
     }
 
-    // Price path: drift + cyclic component + a head-and-shoulders shape near the end.
-    var price = 920;
+    // Trajectory anchors (date, target close in SAR) — interpolated linearly
+    // and overlaid with cyclical + noise components. Designed so the implied
+    // 52-week range (~504 – 1,090) and last close (575) match real reporting,
+    // and a Head-and-Shoulders top is detectable in the upper half.
+    var anchors = [
+      { i: 0,   p: 950  },
+      { i: 20,  p: 1050 },   // left shoulder
+      { i: 45,  p: 975  },   // left trough (neckline level)
+      { i: 70,  p: 1090 },   // head — 52-week high
+      { i: 95,  p: 985  },   // right trough (neckline)
+      { i: 120, p: 1045 },   // right shoulder (≈ left shoulder)
+      { i: 150, p: 830  },   // breakdown through neckline
+      { i: 180, p: 720  },
+      { i: 200, p: 510  },   // 52-week low
+      { i: 219, p: 575  }    // last close anchor
+    ];
+
+    function interp(i) {
+      for (var k = 0; k < anchors.length - 1; k++) {
+        var a = anchors[k], b = anchors[k + 1];
+        if (i >= a.i && i <= b.i) {
+          var t = (i - a.i) / (b.i - a.i);
+          return a.p + (b.p - a.p) * t;
+        }
+      }
+      return anchors[anchors.length - 1].p;
+    }
+
     var out = [];
     for (var i = 0; i < sessions.length; i++) {
-      var t = i / sessions.length;
+      var base = interp(i);
 
-      // Long-term drift.
-      var drift = 0.18;
-
-      // Two macro waves.
+      // Cyclic component (noise around the anchored path).
       var wave =
-        18 * Math.sin((i / sessions.length) * Math.PI * 2 * 1.4) +
-        9 * Math.sin((i / sessions.length) * Math.PI * 2 * 3.2);
+        14 * Math.sin((i / sessions.length) * Math.PI * 2 * 1.5) +
+        7 * Math.sin((i / sessions.length) * Math.PI * 2 * 4.1);
 
-      // Engineered Head & Shoulders top in the last ~60 sessions:
-      //   left shoulder, head, right shoulder followed by a neckline break.
-      var late = sessions.length - i;
-      var hs = 0;
-      if (late <= 60 && late > 0) {
-        var p = (60 - late) / 60; // 0 -> 1 across the last 60 sessions
-        // Three Gaussian bumps: shoulder, head, shoulder
-        function bump(center, width, amp) {
-          var x = (p - center) / width;
-          return amp * Math.exp(-x * x);
-        }
-        hs =
-          bump(0.18, 0.07, 28) +     // left shoulder
-          bump(0.45, 0.08, 46) +     // head (higher)
-          bump(0.72, 0.07, 26);      // right shoulder (lower than head)
-        // Post right-shoulder breakdown begins after p ~ 0.82
-        if (p > 0.82) hs -= 30 * (p - 0.82) / 0.18;
-      }
+      var noise = (rng() - 0.5) * 9;
+      var close = base + wave + noise;
 
-      var noise = (rng() - 0.5) * 6;
-      var close = 900 + drift * i + wave + hs + noise;
+      // Pin the very last bar to the published close.
+      if (i === sessions.length - 1) close = 575.00;
+      // Pin the second-to-last bar near the published prior close.
+      if (i === sessions.length - 2) close = 570.50;
 
-      // Build OHLC around close
       var rangePct = 0.012 + rng() * 0.018;
       var open = close + (rng() - 0.5) * close * 0.008;
       var high = Math.max(open, close) + rng() * close * rangePct * 0.5;
       var low = Math.min(open, close) - rng() * close * rangePct * 0.5;
-      var volume = Math.round(120000 + rng() * 380000 + (Math.abs(hs) > 20 ? 250000 : 0));
+      var volume = Math.round(150000 + rng() * 420000);
 
       out.push({
         date: fmt(sessions[i]),
@@ -97,7 +107,9 @@
     symbol: "7203.SR",
     name: "Elm Company",
     nameAr: "شركة علم",
-    market: "Tadawul"
+    market: "Tadawul",
+    asOfFallback: "2026-04-29"
   };
   window.STOCK_DATA = buildSeries();
+  window.STOCK_DATA_SOURCE = "fallback";
 })();

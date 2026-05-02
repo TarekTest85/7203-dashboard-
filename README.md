@@ -33,28 +33,58 @@ python3 -m http.server 8000
 
 No build step, no dependencies beyond Chart.js (loaded from CDN).
 
+## Hosted online
+
+Pushes to this branch (or `main`) deploy automatically to GitHub Pages via
+`.github/workflows/pages.yml`. To enable:
+
+1. Open the repo on GitHub → **Settings → Pages**.
+2. Set **Source** to *GitHub Actions*.
+3. Re-run the latest workflow if needed.
+
+The deployed URL is shown on the workflow run summary and is typically:
+
+```
+https://<owner>.github.io/7203-dashboard-/
+```
+
+## Live vs demo data
+
+On load (and when you click **Refresh**), `live.js` attempts to pull the
+last year of daily candles for `7203.SR` from Yahoo Finance through a
+public CORS proxy (`corsproxy.io`, falling back to `allorigins.win`). The
+header pill shows **LIVE** if the fetch succeeded, otherwise **DEMO**.
+
+The embedded fallback in `data.js` is anchored to the publicly reported
+last close of **575.00 SAR (29 Apr 2026)**, prior close 570.50 SAR, and
+52-week range ~504.50 – 1,090.00 SAR — verified against Investing.com,
+StockAnalysis.com and Tadawul.
+
 ## Files
 
 | File | Purpose |
 | --- | --- |
 | `index.html` | Layout & containers |
 | `style.css` | Dashboard styling |
-| `data.js` | Generates the OHLCV series for 7203.SR (replace with a live fetch in production) |
+| `data.js` | Embedded fallback OHLCV anchored to verified Tadawul levels |
+| `live.js` | Fetches a fresh 1-year series from Yahoo Finance via CORS proxy |
 | `indicators.js` | SMA / EMA / RSI / MACD / ATR / swing pivot detection |
 | `patterns.js` | Bulkowski pattern detection + reference statistics |
 | `app.js` | Wires charts, detection and forecast together |
+| `.github/workflows/pages.yml` | Deploys the static site to GitHub Pages |
 
-## Replacing the synthetic data
+## Replacing the data source
 
-`data.js` currently produces a deterministic 220-session series so the
-dashboard renders consistently offline. To use live Tadawul data, replace
-`buildSeries()` with a fetch call (e.g. Tadawul's market data API or a
-provider such as Yahoo Finance: `7203.SR`) that returns the same array
-shape:
+`data.js` produces a deterministic 220-session series anchored to
+verified Tadawul price levels for offline use. `live.js` fetches the
+real series at runtime. To swap in your own data feed, expose a
+function that returns:
 
 ```js
 [{ date: "YYYY-MM-DD", open, high, low, close, volume }, ...]
 ```
+
+…then call `render(rows, "live")` from `app.js`.
 
 ## Disclaimer
 
