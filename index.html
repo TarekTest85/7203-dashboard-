@@ -3,87 +3,155 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>7203 Elm Co. — Tadawul Trend Dashboard</title>
+<title>7203 Elm · Tadawul Trend Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
 <link rel="stylesheet" href="style.css" />
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
+
 <header class="topbar">
   <div class="brand">
-    <span class="ticker">7203.SR</span>
-    <span class="name">Elm Company &mdash; شركة علم</span>
-    <span class="market">Tadawul · Saudi Stock Exchange</span>
+    <div class="logo">7203</div>
+    <div class="brand-text">
+      <div class="brand-name">Elm Company <span class="brand-ar">شركة علم</span></div>
+      <div class="brand-sub">Tadawul · Saudi Stock Exchange · TADAWUL:7203</div>
+    </div>
   </div>
-  <div class="quote">
-    <span id="lastPrice" class="price">&mdash;</span>
-    <span id="lastChange" class="change">&mdash;</span>
-    <span id="lastDate" class="date">&mdash;</span>
-    <span id="dataSource" class="source" title="Data source">demo</span>
-    <button id="refreshBtn" class="refresh" type="button">Refresh</button>
+  <div class="topbar-actions">
+    <span id="dataSource" class="pill" title="Data source">demo</span>
+    <button id="refreshBtn" class="btn btn-primary" type="button">
+      <span class="btn-icon">↻</span> Refresh
+    </button>
   </div>
 </header>
 
 <main>
-  <section class="card chart-card">
-    <div class="card-head">
-      <h2>Price &amp; Indicators</h2>
-      <div class="legend">
-        <span class="dot dot-price"></span>Close
-        <span class="dot dot-sma20"></span>SMA(20)
-        <span class="dot dot-sma50"></span>SMA(50)
+
+  <section class="hero">
+    <div class="hero-left">
+      <div class="hero-label">Last close</div>
+      <div class="hero-price"><span id="lastPrice">—</span><span class="hero-currency">SAR</span></div>
+      <div class="hero-change-row">
+        <span id="lastChange" class="hero-change">—</span>
+        <span id="lastDate" class="hero-date">—</span>
       </div>
     </div>
-    <canvas id="priceChart" height="120"></canvas>
+    <div class="hero-stats">
+      <div class="stat">
+        <div class="stat-label">Day Range</div>
+        <div class="stat-value" id="statDayRange">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">52-Week Range</div>
+        <div class="stat-value" id="stat52Range">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">SMA(20) / SMA(50)</div>
+        <div class="stat-value" id="statSma">—</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">RSI(14)</div>
+        <div class="stat-value" id="statRsi">—</div>
+      </div>
+    </div>
   </section>
 
-  <section class="grid">
+  <section class="card chart-card">
+    <div class="card-head">
+      <div>
+        <h2>Price &amp; Forecast</h2>
+        <p class="card-sub">Closing price with 20- &amp; 50-session moving averages and 5-session forward projection</p>
+      </div>
+      <div class="legend">
+        <span class="legend-item"><span class="dot dot-price"></span>Close</span>
+        <span class="legend-item"><span class="dot dot-sma20"></span>SMA 20</span>
+        <span class="legend-item"><span class="dot dot-sma50"></span>SMA 50</span>
+        <span class="legend-item"><span class="dot dot-fc"></span>Forecast</span>
+        <button id="chartToggle" class="btn btn-ghost btn-sm" type="button" aria-pressed="true">Hide chart</button>
+      </div>
+    </div>
+    <div class="chart-wrap chart-wrap-lg" id="priceChartWrap">
+      <canvas id="priceChart"></canvas>
+    </div>
+  </section>
+
+  <section class="grid grid-2">
     <div class="card">
-      <h3>RSI(14)</h3>
-      <canvas id="rsiChart" height="80"></canvas>
-      <p id="rsiNote" class="muted">&mdash;</p>
+      <div class="card-head">
+        <div>
+          <h3>RSI (14)</h3>
+          <p class="card-sub" id="rsiNote">—</p>
+        </div>
+      </div>
+      <div class="chart-wrap chart-wrap-sm"><canvas id="rsiChart"></canvas></div>
     </div>
     <div class="card">
-      <h3>MACD(12,26,9)</h3>
-      <canvas id="macdChart" height="80"></canvas>
-      <p id="macdNote" class="muted">&mdash;</p>
+      <div class="card-head">
+        <div>
+          <h3>MACD (12, 26, 9)</h3>
+          <p class="card-sub" id="macdNote">—</p>
+        </div>
+      </div>
+      <div class="chart-wrap chart-wrap-sm"><canvas id="macdChart"></canvas></div>
     </div>
   </section>
 
   <section class="card">
-    <h2>Detected Chart Patterns</h2>
-    <p class="muted small">
-      Detection follows Thomas N. Bulkowski's <em>Visual Guide to Chart Patterns</em>
-      definitions for Head &amp; Shoulders, Double Top/Bottom, Triangles
-      (ascending, descending, symmetrical), Flags, Wedges and Cup-with-Handle.
-    </p>
+    <div class="card-head">
+      <div>
+        <h2>Detected Chart Patterns</h2>
+        <p class="card-sub">Patterns and post-breakout statistics from Bulkowski's <em>Visual Guide to Chart Patterns</em>.</p>
+      </div>
+    </div>
     <div id="patternList" class="patterns"></div>
   </section>
 
   <section class="card forecast-card">
-    <h2>Next-Week Trend Forecast</h2>
-    <div class="forecast">
-      <div id="trendBadge" class="badge">&mdash;</div>
-      <div class="forecast-body">
-        <div class="forecast-row">
-          <span>Projected close in 5 sessions</span>
-          <strong id="targetPrice">&mdash;</strong>
+    <div class="card-head">
+      <div>
+        <h2>Next-Week Forecast</h2>
+        <p class="card-sub">Day-by-day projection for the next 5 Tadawul sessions (Sun–Thu).</p>
+      </div>
+      <div id="trendBadge" class="trend-badge">—</div>
+    </div>
+
+    <div class="forecast-summary">
+      <div class="confidence-block">
+        <div class="gauge" id="confidenceGauge" style="--pct: 0">
+          <div class="gauge-inner">
+            <div class="gauge-pct" id="confidencePct">—%</div>
+            <div class="gauge-label">Confidence</div>
+          </div>
         </div>
-        <div class="forecast-row">
-          <span>Expected range</span>
-          <strong id="targetRange">&mdash;</strong>
+      </div>
+      <div class="summary-stats">
+        <div class="sum-stat">
+          <div class="sum-label">5-Session Target</div>
+          <div class="sum-value" id="targetPrice">—</div>
         </div>
-        <div class="forecast-row">
-          <span>Confidence</span>
-          <strong id="confidence">&mdash;</strong>
+        <div class="sum-stat">
+          <div class="sum-label">Expected Range</div>
+          <div class="sum-value" id="targetRange">—</div>
         </div>
-        <p id="rationale" class="rationale"></p>
+        <div class="sum-stat">
+          <div class="sum-label">Composite Score</div>
+          <div class="sum-value" id="compositeScore">—</div>
+        </div>
       </div>
     </div>
-    <p class="disclaimer">
-      Educational dashboard. Pattern probabilities are taken from Bulkowski's
-      published statistics; this is not investment advice.
-    </p>
+
+    <div class="day-cards" id="dayCards"></div>
+
+    <p id="rationale" class="rationale">—</p>
   </section>
+
+  <footer class="page-footer">
+    <p>Educational dashboard. Pattern probabilities are taken from Bulkowski's published statistics; this is not investment advice.</p>
+  </footer>
+
 </main>
 
 <script src="data.js"></script>
