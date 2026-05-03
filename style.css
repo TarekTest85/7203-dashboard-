@@ -568,6 +568,121 @@ main {
   color: var(--text-2);
 }
 
+/* ───────────────────────────  History  ─────────────────────────── */
+.history-actions { display: flex; gap: 8px; }
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.history-list:empty::after {
+  content: "No saved snapshots yet. Load a stock or change the horizon to start a history.";
+  color: var(--muted);
+  font-size: 13px;
+  padding: 12px;
+  display: block;
+}
+
+.hist-item {
+  display: grid;
+  grid-template-columns: 60px 1.2fr 1fr 1fr 1fr 80px auto;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.1s ease;
+}
+.hist-item:hover { border-color: var(--accent); transform: translateY(-1px); }
+.hist-item.up { border-left: 3px solid var(--green); }
+.hist-item.down { border-left: 3px solid var(--red); }
+.hist-item.flat { border-left: 3px solid var(--yellow); }
+
+.hist-dir {
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  text-align: center;
+  background: rgba(255,255,255,0.05);
+  color: var(--text-2);
+}
+.hist-item.up .hist-dir { color: var(--green); background: rgba(46, 224, 164, 0.1); }
+.hist-item.down .hist-dir { color: var(--red); background: rgba(255, 97, 120, 0.1); }
+.hist-item.flat .hist-dir { color: var(--yellow); background: rgba(255, 201, 96, 0.1); }
+
+.hist-symbol {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 14px;
+}
+.hist-symbol .hist-meta { display: block; font-family: var(--font); font-weight: 500; font-size: 11px; color: var(--muted); margin-top: 2px; letter-spacing: 0.02em; }
+
+.hist-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.hist-cell-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.hist-cell-value {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.hist-conf-bar {
+  height: 4px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 999px;
+  overflow: hidden;
+  margin-top: 4px;
+}
+.hist-conf-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+  border-radius: 999px;
+}
+
+.hist-remove {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--muted);
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+.hist-remove:hover { color: var(--red); border-color: var(--red); }
+
+@media (max-width: 800px) {
+  .hist-item {
+    grid-template-columns: 50px 1fr auto;
+    grid-template-areas:
+      "dir sym remove"
+      "tgt tgt tgt"
+      "conf conf conf";
+    gap: 8px;
+  }
+  .hist-item .hist-dir { grid-area: dir; }
+  .hist-item .hist-symbol { grid-area: sym; }
+  .hist-item .hist-remove { grid-area: remove; }
+  .hist-item .hist-target { grid-area: tgt; }
+  .hist-item .hist-conf { grid-area: conf; }
+  .hist-item .hist-source, .hist-item .hist-horizon { display: none; }
+}
+
 .page-footer {
   margin-top: 8px;
   text-align: center;

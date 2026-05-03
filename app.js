@@ -169,7 +169,8 @@
   }
 
   // ── Render ──
-  function render() {
+  function render(opts) {
+    opts = opts || {};
     var data = state.rows;
     var symbol = state.symbol;
     var horizonDays = state.horizonWeeks * 5;
@@ -328,6 +329,101 @@
 
     applyForecast(forecast, ccy);
     syncSegButtons();
+
+    if (opts.save) saveSnapshot(forecast, patterns);
+    renderHistoryList();
+  }
+
+  function saveSnapshot(forecast, patterns) {
+    var last = state.rows[state.rows.length - 1];
+    var entry = {
+      id: Date.now(),
+      savedAt: new Date().toISOString(),
+      symbol: state.symbol,
+      source: state.source,
+      lastDate: last.date,
+      lastClose: last.close,
+      horizonWeeks: state.horizonWeeks,
+      forecast: {
+        direction: forecast.direction,
+        label: forecast.label,
+        score: forecast.score,
+        confidence: forecast.confidence,
+        target: forecast.target,
+        lower: forecast.lower,
+        upper: forecast.upper,
+        days: forecast.days,
+        rationale: forecast.rationale
+      },
+      patterns: patterns.map(function (p) {
+        return { name: p.name, bias: p.bias, stage: p.stage,
+                 confidence: p.confidence, neckline: p.neckline, target: p.target };
+      }),
+      rows: state.rows
+    };
+    window.HistoryStore.add(entry);
+  }
+
+  function renderHistoryList() {
+    var listEl = document.getElementById("historyList");
+    if (!listEl) return;
+    var entries = window.HistoryStore.getAll();
+    listEl.innerHTML = "";
+    entries.forEach(function (e) {
+      var ccy = /\.SR$/i.test(e.symbol) ? "SAR" : "USD";
+      var dirClass = e.forecast.direction || "flat";
+      var conf = Math.round((e.forecast.confidence || 0) * 100);
+      var savedTime = new Date(e.savedAt);
+      var savedStr = savedTime.toISOString().slice(0, 16).replace("T", " ");
+      var pct = ((e.forecast.target - e.lastClose) / e.lastClose) * 100;
+      var horizonLabel = e.horizonWeeks + "W (" + (e.horizonWeeks * 5) + " sessions)";
+
+      var row = document.createElement("div");
+      row.className = "hist-item " + dirClass;
+      row.innerHTML =
+        '<div class="hist-dir">' + (e.forecast.label || "—") + '</div>' +
+        '<div class="hist-symbol">' + e.symbol +
+            '<span class="hist-meta">Saved ' + savedStr + ' UTC · ' +
+                (e.source === "live" ? "live" : "demo") + ' · close ' + e.lastDate + '</span>' +
+        '</div>' +
+        '<div class="hist-cell hist-source"><span class="hist-cell-label">Last close</span>' +
+            '<span class="hist-cell-value">' + e.lastClose.toFixed(2) + ' ' + ccy + '</span></div>' +
+        '<div class="hist-cell hist-target"><span class="hist-cell-label">Target ' + horizonLabel + '</span>' +
+            '<span class="hist-cell-value">' + e.forecast.target.toFixed(2) + ' ' + ccy +
+            ' (' + (pct >= 0 ? "+" : "") + pct.toFixed(2) + '%)</span></div>' +
+        '<div class="hist-cell hist-horizon"><span class="hist-cell-label">Range</span>' +
+            '<span class="hist-cell-value">' + e.forecast.lower.toFixed(2) + ' – ' +
+            e.forecast.upper.toFixed(2) + '</span></div>' +
+        '<div class="hist-cell hist-conf"><span class="hist-cell-label">Confidence ' + conf + '%</span>' +
+            '<div class="hist-conf-bar"><div class="hist-conf-fill" style="width:' + conf + '%"></div></div>' +
+        '</div>' +
+        '<button class="hist-remove" data-id="' + e.id + '" title="Remove">✕</button>';
+
+      row.addEventListener("click", function (ev) {
+        if (ev.target.classList.contains("hist-remove")) return;
+        restoreSnapshot(e);
+      });
+      listEl.appendChild(row);
+    });
+
+    listEl.querySelectorAll(".hist-remove").forEach(function (btn) {
+      btn.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        window.HistoryStore.remove(parseInt(btn.dataset.id, 10));
+        renderHistoryList();
+      });
+    });
+  }
+
+  function restoreSnapshot(e) {
+    state.symbol = e.symbol;
+    state.rows = e.rows;
+    state.source = e.source;
+    state.horizonWeeks = e.horizonWeeks;
+    document.getElementById("symbolInput").value = e.symbol.replace(/\.SR$/i, "");
+    localStorage.setItem("elm7203.horizon", String(e.horizonWeeks));
+    render({ save: false });
+    document.querySelector(".chart-card").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function applyForecast(f, ccy) {
@@ -383,9 +479,10 @@
 
   // ── Bootstrap ──
   document.getElementById("symbolInput").value = state.symbol.replace(/\.SR$/i, "");
-  render();
+  render({ save: false });
 
-  async function loadSymbol(symbolRaw) {
+  async function loadSymbol(symbolRaw, opts) {
+    opts = opts || { save: true };
     var sym = normaliseSymbol(symbolRaw);
     if (!sym) return;
     var btn = document.getElementById("loadSymbolBtn");
@@ -401,7 +498,6 @@
       state.rows = window.STOCK_DATA;
       state.source = "fallback";
     } else {
-      // No fallback for non-7203; surface a minimal message via the source pill
       var srcEl = document.getElementById("dataSource");
       srcEl.classList.remove("live", "fallback");
       srcEl.textContent = "no data for " + sym;
@@ -410,25 +506,25 @@
       btn.disabled = false; btn.textContent = "Load";
       return;
     }
-    render();
+    render({ save: opts.save });
     btn.disabled = false; btn.textContent = "Load";
   }
 
   document.getElementById("loadSymbolBtn").addEventListener("click", function () {
-    loadSymbol(document.getElementById("symbolInput").value);
+    loadSymbol(document.getElementById("symbolInput").value, { save: true });
   });
   document.getElementById("symbolInput").addEventListener("keydown", function (e) {
-    if (e.key === "Enter") loadSymbol(e.target.value);
+    if (e.key === "Enter") loadSymbol(e.target.value, { save: true });
   });
   document.getElementById("symbolPreset").addEventListener("change", function (e) {
     if (!e.target.value) return;
     document.getElementById("symbolInput").value = e.target.value;
-    loadSymbol(e.target.value);
+    loadSymbol(e.target.value, { save: true });
     e.target.value = "";
   });
 
   document.getElementById("refreshBtn").addEventListener("click", function () {
-    loadSymbol(state.symbol.replace(/\.SR$/i, ""));
+    loadSymbol(state.symbol.replace(/\.SR$/i, ""), { save: true });
   });
 
   // Horizon segmented control
@@ -436,8 +532,26 @@
     b.addEventListener("click", function () {
       state.horizonWeeks = parseInt(b.dataset.weeks, 10);
       localStorage.setItem("elm7203.horizon", String(state.horizonWeeks));
-      render();
+      render({ save: true });
     });
+  });
+
+  // History controls
+  document.getElementById("historyClear").addEventListener("click", function () {
+    if (confirm("Clear all history snapshots?")) {
+      window.HistoryStore.clear();
+      renderHistoryList();
+    }
+  });
+  document.getElementById("historyExport").addEventListener("click", function () {
+    var data = window.HistoryStore.getAll();
+    var blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url;
+    a.download = "7203-dashboard-history-" + new Date().toISOString().slice(0, 10) + ".json";
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
   });
 
   // Chart toggle
@@ -462,6 +576,6 @@
     applyToggle(state.chartHidden);
   });
 
-  // Auto-trigger live fetch on first load
-  loadSymbol(state.symbol.replace(/\.SR$/i, ""));
+  // Auto-trigger live fetch on first load (silent — no history entry).
+  loadSymbol(state.symbol.replace(/\.SR$/i, ""), { save: false });
 })();
