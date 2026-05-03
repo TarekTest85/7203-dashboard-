@@ -331,7 +331,6 @@
     syncSegButtons();
 
     if (opts.save) saveSnapshot(forecast, patterns);
-    renderHistoryList();
   }
 
   function saveSnapshot(forecast, patterns) {
@@ -364,57 +363,6 @@
     window.HistoryStore.add(entry);
   }
 
-  function renderHistoryList() {
-    var listEl = document.getElementById("historyList");
-    if (!listEl) return;
-    var entries = window.HistoryStore.getAll();
-    listEl.innerHTML = "";
-    entries.forEach(function (e) {
-      var ccy = /\.SR$/i.test(e.symbol) ? "SAR" : "USD";
-      var dirClass = e.forecast.direction || "flat";
-      var conf = Math.round((e.forecast.confidence || 0) * 100);
-      var savedTime = new Date(e.savedAt);
-      var savedStr = savedTime.toISOString().slice(0, 16).replace("T", " ");
-      var pct = ((e.forecast.target - e.lastClose) / e.lastClose) * 100;
-      var horizonLabel = e.horizonWeeks + "W (" + (e.horizonWeeks * 5) + " sessions)";
-
-      var row = document.createElement("div");
-      row.className = "hist-item " + dirClass;
-      row.innerHTML =
-        '<div class="hist-dir">' + (e.forecast.label || "—") + '</div>' +
-        '<div class="hist-symbol">' + e.symbol +
-            '<span class="hist-meta">Saved ' + savedStr + ' UTC · ' +
-                (e.source === "live" ? "live" : "demo") + ' · close ' + e.lastDate + '</span>' +
-        '</div>' +
-        '<div class="hist-cell hist-source"><span class="hist-cell-label">Last close</span>' +
-            '<span class="hist-cell-value">' + e.lastClose.toFixed(2) + ' ' + ccy + '</span></div>' +
-        '<div class="hist-cell hist-target"><span class="hist-cell-label">Target ' + horizonLabel + '</span>' +
-            '<span class="hist-cell-value">' + e.forecast.target.toFixed(2) + ' ' + ccy +
-            ' (' + (pct >= 0 ? "+" : "") + pct.toFixed(2) + '%)</span></div>' +
-        '<div class="hist-cell hist-horizon"><span class="hist-cell-label">Range</span>' +
-            '<span class="hist-cell-value">' + e.forecast.lower.toFixed(2) + ' – ' +
-            e.forecast.upper.toFixed(2) + '</span></div>' +
-        '<div class="hist-cell hist-conf"><span class="hist-cell-label">Confidence ' + conf + '%</span>' +
-            '<div class="hist-conf-bar"><div class="hist-conf-fill" style="width:' + conf + '%"></div></div>' +
-        '</div>' +
-        '<button class="hist-remove" data-id="' + e.id + '" title="Remove">✕</button>';
-
-      row.addEventListener("click", function (ev) {
-        if (ev.target.classList.contains("hist-remove")) return;
-        restoreSnapshot(e);
-      });
-      listEl.appendChild(row);
-    });
-
-    listEl.querySelectorAll(".hist-remove").forEach(function (btn) {
-      btn.addEventListener("click", function (ev) {
-        ev.stopPropagation();
-        window.HistoryStore.remove(parseInt(btn.dataset.id, 10));
-        renderHistoryList();
-      });
-    });
-  }
-
   function restoreSnapshot(e) {
     state.symbol = e.symbol;
     state.rows = e.rows;
@@ -424,6 +372,19 @@
     localStorage.setItem("elm7203.horizon", String(e.horizonWeeks));
     render({ save: false });
     document.querySelector(".chart-card").scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  // If history.html opened us with ?restore=<id>, replay that snapshot
+  // instead of doing a fresh live fetch on bootstrap.
+  function tryRestoreFromUrl() {
+    var match = location.search.match(/[?&]restore=([^&]+)/);
+    if (!match) return false;
+    var id = parseInt(decodeURIComponent(match[1]), 10);
+    var entry = window.HistoryStore.getAll().find(function (e) { return e.id === id; });
+    if (!entry) return false;
+    restoreSnapshot(entry);
+    if (history.replaceState) history.replaceState({}, "", location.pathname);
+    return true;
   }
 
   function applyForecast(f, ccy) {
@@ -536,23 +497,6 @@
     });
   });
 
-  // History controls
-  document.getElementById("historyClear").addEventListener("click", function () {
-    if (confirm("Clear all history snapshots?")) {
-      window.HistoryStore.clear();
-      renderHistoryList();
-    }
-  });
-  document.getElementById("historyExport").addEventListener("click", function () {
-    var data = window.HistoryStore.getAll();
-    var blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement("a");
-    a.href = url;
-    a.download = "7203-dashboard-history-" + new Date().toISOString().slice(0, 10) + ".json";
-    document.body.appendChild(a); a.click(); a.remove();
-    URL.revokeObjectURL(url);
-  });
 
   // Chart toggle
   var chartWrap = document.getElementById("priceChartWrap");
@@ -576,6 +520,9 @@
     applyToggle(state.chartHidden);
   });
 
-  // Auto-trigger live fetch on first load (silent — no history entry).
-  loadSymbol(state.symbol.replace(/\.SR$/i, ""), { save: false });
+  // If history asked us to restore a snapshot, do that and skip the
+  // automatic live fetch (which would clobber the restored view).
+  if (!tryRestoreFromUrl()) {
+    loadSymbol(state.symbol.replace(/\.SR$/i, ""), { save: false });
+  }
 })();

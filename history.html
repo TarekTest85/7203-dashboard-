@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>History · 7203 Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">⌚</div>
+    <div class="brand-text">
+      <div class="brand-name">Snapshot History</div>
+      <div class="brand-sub">All saved Load / Refresh / horizon-change snapshots, browsable by date</div>
+    </div>
+  </div>
+  <div class="topbar-controls">
+    <a href="index.html" class="btn btn-primary btn-sm" title="Back to dashboard">
+      <span class="btn-icon">←</span> Dashboard
+    </a>
+  </div>
+</header>
+
+<main>
+
+  <section class="card">
+    <div class="card-head">
+      <div>
+        <h2>Browse</h2>
+        <p class="card-sub" id="filterSummary">Loading…</p>
+      </div>
+      <div class="history-actions">
+        <button id="historyExport" class="btn btn-ghost btn-sm" type="button">Export JSON</button>
+        <button id="historyClear" class="btn btn-ghost btn-sm" type="button">Clear all</button>
+      </div>
+    </div>
+
+    <div class="filters">
+      <label class="filter">
+        <span class="filter-label">From</span>
+        <input id="dateFrom" type="date" class="input" />
+      </label>
+      <label class="filter">
+        <span class="filter-label">To</span>
+        <input id="dateTo" type="date" class="input" />
+      </label>
+      <label class="filter">
+        <span class="filter-label">Symbol</span>
+        <input id="symFilter" type="text" class="input" placeholder="e.g. 7203 or AAPL" autocomplete="off" />
+      </label>
+      <label class="filter">
+        <span class="filter-label">Direction</span>
+        <select id="dirFilter" class="input">
+          <option value="">Any</option>
+          <option value="up">Bullish</option>
+          <option value="down">Bearish</option>
+          <option value="flat">Neutral</option>
+        </select>
+      </label>
+      <button id="resetFilters" class="btn btn-ghost btn-sm" type="button">Reset</button>
+    </div>
+  </section>
+
+  <section id="dateGroups" class="date-groups"></section>
+
+</main>
+
+<script src="history.js"></script>
+<script src="history-page.js"></script>
+</body>
+</html>

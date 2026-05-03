@@ -41,6 +41,9 @@
       <button id="loadSymbolBtn" class="btn btn-primary btn-sm" type="button">Load</button>
     </div>
     <span id="dataSource" class="pill" title="Data source">demo</span>
+    <a href="history.html" class="btn btn-ghost btn-sm" title="Browse history">
+      <span class="btn-icon">⌚</span> History
+    </a>
     <button id="refreshBtn" class="btn btn-ghost btn-sm" type="button" title="Refresh live data">
       <span class="btn-icon">↻</span>
     </button>
@@ -173,20 +176,6 @@
     <div class="day-cards" id="dayCards"></div>
 
     <p id="rationale" class="rationale">—</p>
-  </section>
-
-  <section class="card history-card" id="historyCard">
-    <div class="card-head">
-      <div>
-        <h2>History</h2>
-        <p class="card-sub">Saved snapshots of every Load, Refresh and horizon change. Tap a row to restore it.</p>
-      </div>
-      <div class="history-actions">
-        <button id="historyExport" class="btn btn-ghost btn-sm" type="button">Export JSON</button>
-        <button id="historyClear" class="btn btn-ghost btn-sm" type="button">Clear</button>
-      </div>
-    </div>
-    <div id="historyList" class="history-list"></div>
   </section>
 
   <footer class="page-footer">
