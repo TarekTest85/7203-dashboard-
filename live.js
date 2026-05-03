@@ -1,16 +1,13 @@
-// Optional live-data loader for 7203.SR.
-//
-// Browser fetch goes through a CORS-friendly proxy because Yahoo's chart
-// endpoint does not send permissive CORS headers. If the call fails, the
-// dashboard keeps the embedded fallback series defined in data.js.
-//
-// Proxies are tried in order; the first that returns a parseable Yahoo
-// chart payload wins. Replace these with your own proxy / API key in
-// production.
+// Optional live-data loader. Fetches a 1-year daily candle series from
+// Yahoo Finance for any given symbol via a public CORS proxy because
+// Yahoo's chart endpoint does not send permissive CORS headers.
+// Proxies are tried in order; the first that returns a parseable
+// payload wins.
 (function () {
-  var SYMBOL = "7203.SR";
-  var YAHOO = "https://query1.finance.yahoo.com/v8/finance/chart/" +
-    encodeURIComponent(SYMBOL) + "?interval=1d&range=1y";
+  function buildYahoo(symbol, range) {
+    return "https://query1.finance.yahoo.com/v8/finance/chart/" +
+      encodeURIComponent(symbol) + "?interval=1d&range=" + (range || "1y");
+  }
   var PROXIES = [
     function (url) { return "https://corsproxy.io/?" + encodeURIComponent(url); },
     function (url) { return "https://api.allorigins.win/raw?url=" + encodeURIComponent(url); }
@@ -37,8 +34,8 @@
     return rows.length > 50 ? rows : null;
   }
 
-  async function tryFetch(proxyFn) {
-    var url = proxyFn(YAHOO);
+  async function tryFetch(proxyFn, symbol) {
+    var url = proxyFn(buildYahoo(symbol));
     var res = await fetch(url, { cache: "no-store" });
     if (!res.ok) throw new Error("http " + res.status);
     var text = await res.text();
@@ -48,14 +45,13 @@
     return rows;
   }
 
-  async function loadLive() {
+  async function loadLive(symbol) {
+    symbol = symbol || "7203.SR";
     for (var i = 0; i < PROXIES.length; i++) {
       try {
-        var rows = await tryFetch(PROXIES[i]);
-        return { rows: rows, source: "live" };
-      } catch (e) {
-        // try next proxy
-      }
+        var rows = await tryFetch(PROXIES[i], symbol);
+        return { rows: rows, source: "live", symbol: symbol };
+      } catch (e) { /* try next */ }
     }
     return null;
   }

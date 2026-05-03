@@ -89,6 +89,56 @@ main {
 .brand-sub { color: var(--muted); font-size: 12px; }
 
 .topbar-actions { display: flex; align-items: center; gap: 10px; }
+.topbar-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.symbol-switcher {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+  background: var(--panel-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 4px;
+}
+.symbol-input {
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 600;
+  padding: 6px 10px;
+  width: 180px;
+  letter-spacing: 0.02em;
+}
+.symbol-input::placeholder { color: var(--muted); font-weight: 500; }
+.symbol-input:focus { background: rgba(255,255,255,0.03); border-radius: 6px; }
+.symbol-preset {
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  outline: none;
+  max-width: 140px;
+}
+.symbol-preset option { background: var(--bg-1); color: var(--text); }
+.symbol-switcher .btn { margin: 1px; }
+
+@media (max-width: 700px) {
+  .symbol-input { width: 130px; }
+  .symbol-preset { display: none; }
+}
 
 .pill {
   font-size: 11px;
@@ -413,14 +463,43 @@ main {
   letter-spacing: -0.01em;
 }
 
-/* Day cards (per-session forecast) */
+/* Forecast head controls (segmented horizon picker + trend badge) */
+.forecast-head-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.seg {
+  display: inline-flex;
+  background: var(--panel-2);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 3px;
+  gap: 2px;
+}
+.seg-btn {
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  border-radius: 7px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.seg-btn:hover { color: var(--text); background: rgba(255,255,255,0.03); }
+.seg-btn.active {
+  background: linear-gradient(135deg, rgba(106,163,255,0.3), rgba(180,140,255,0.25));
+  color: var(--text);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.05) inset;
+}
+
+/* Day cards (per-session forecast) — wraps to multiple rows for longer horizons */
 .day-cards {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
-@media (max-width: 900px) { .day-cards { grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); } }
 
 .day-card {
   background: var(--panel-2);

@@ -1,16 +1,42 @@
 // Wires the dashboard together: renders charts, runs detection, and
-// produces a per-session forecast for the next 5 Tadawul sessions
-// (Sun–Thu). Re-renders when live data arrives.
+// produces a per-session forecast over a configurable horizon (1–4
+// weeks of Tadawul sessions). Symbol can be switched at runtime; live
+// data is fetched from Yahoo Finance via a CORS proxy.
 (function () {
   var chartRefs = { price: null, rsi: null, macd: null };
   var TADAWUL_WEEKEND = { 5: true, 6: true }; // Fri (5), Sat (6) closed
+  var US_WEEKEND = { 0: true, 6: true };       // Sun (0), Sat (6) closed
 
-  function nextTradingDays(fromDateStr, n) {
+  // ── State ──
+  var state = {
+    symbol: "7203.SR",
+    rows: window.STOCK_DATA,
+    source: "fallback",
+    horizonWeeks: parseInt(localStorage.getItem("elm7203.horizon") || "1", 10),
+    chartHidden: localStorage.getItem("elm7203.chartHidden") === "1"
+  };
+
+  // ── Symbol helpers ──
+  // Tadawul tickers are 4-digit numbers; Yahoo expects ".SR" suffix.
+  function normaliseSymbol(raw) {
+    if (!raw) return null;
+    var s = raw.trim().toUpperCase();
+    if (!s) return null;
+    if (/^\d{4}$/.test(s)) return s + ".SR";
+    return s;
+  }
+  function isTadawul(symbol) { return /\.SR$/i.test(symbol); }
+  function weekendSet(symbol) { return isTadawul(symbol) ? TADAWUL_WEEKEND : US_WEEKEND; }
+  function weekLabel(symbol) {
+    return isTadawul(symbol) ? "Sun–Thu" : "Mon–Fri";
+  }
+
+  function nextTradingDays(fromDateStr, n, weekend) {
     var d = new Date(fromDateStr + "T00:00:00Z");
     var out = [];
     while (out.length < n) {
       d.setUTCDate(d.getUTCDate() + 1);
-      if (!TADAWUL_WEEKEND[d.getUTCDay()]) out.push(d.toISOString().slice(0, 10));
+      if (!weekend[d.getUTCDay()]) out.push(d.toISOString().slice(0, 10));
     }
     return out;
   }
@@ -19,8 +45,8 @@
     for (var i = arr.length - 1; i >= 0; i--) if (arr[i] != null) return arr[i];
     return null;
   }
-
   function fmtSAR(n) { return n.toFixed(2); }
+  function currencyOf(symbol) { return isTadawul(symbol) ? "SAR" : "USD"; }
 
   function chartBase(scales, opts) {
     return Object.assign({
@@ -37,7 +63,7 @@
     }, opts || {});
   }
 
-  // ─────────────────  Forecast logic  ─────────────────
+  // ── Forecast logic ──
   function buildVotes(candles, patterns, ind) {
     var lastClose = candles[candles.length - 1].close;
     var rsiLast = lastValid(ind.rsi);
@@ -48,7 +74,6 @@
     var histLast = lastValid(ind.macd.hist);
 
     var votes = [];
-
     patterns.forEach(function (p) {
       var weight = p.confidence * (p.stats ? Math.min(1, Math.abs(p.stats.avgMove) / 30) : 0.5);
       var dir = p.bias === "bull" ? 1 : p.bias === "bear" ? -1 : 0;
@@ -63,14 +88,12 @@
       else
         votes.push({ source: "SMA stack mixed", direction: 0, weight: 0.2 });
     }
-
     if (rsiLast != null) {
       if (rsiLast >= 70) votes.push({ source: "RSI overbought (" + rsiLast.toFixed(0) + ")", direction: -0.5, weight: 0.4 });
       else if (rsiLast <= 30) votes.push({ source: "RSI oversold (" + rsiLast.toFixed(0) + ")", direction: 0.5, weight: 0.4 });
       else if (rsiLast > 55) votes.push({ source: "RSI bullish (" + rsiLast.toFixed(0) + ")", direction: 0.3, weight: 0.3 });
       else if (rsiLast < 45) votes.push({ source: "RSI bearish (" + rsiLast.toFixed(0) + ")", direction: -0.3, weight: 0.3 });
     }
-
     if (macdLast != null && sigLast != null) {
       var macdDir = macdLast > sigLast ? 1 : -1;
       var strength = Math.min(1, Math.abs(histLast || 0) / (lastClose * 0.005));
@@ -79,7 +102,7 @@
     return votes;
   }
 
-  function buildForecast(candles, patterns, ind) {
+  function buildForecast(candles, patterns, ind, horizonDays, weekend) {
     var lastBar = candles[candles.length - 1];
     var lastClose = lastBar.close;
     var atrLast = lastValid(ind.atr) || lastClose * 0.015;
@@ -88,37 +111,39 @@
     var totalWeight = votes.reduce(function (s, v) { return s + v.weight; }, 0) || 1;
     var score = votes.reduce(function (s, v) { return s + v.direction * v.weight; }, 0) / totalWeight;
 
-    // Per-day projection: linearly walk toward 5-session target with widening bands.
-    var fiveDayPct = score * (2 * atrLast / lastClose);
-    var fiveDayTarget = lastClose * (1 + fiveDayPct);
+    // Horizon scaling: realistic diffusion ≈ sqrt(time). 1 week ≈ 5 sessions.
+    var horizonScale = Math.sqrt(horizonDays / 5);
+    var horizonPct = score * (2 * atrLast / lastClose) * horizonScale;
+    var horizonTarget = lastClose * (1 + horizonPct);
 
-    var dates = nextTradingDays(lastBar.date, 5);
+    var dates = nextTradingDays(lastBar.date, horizonDays, weekend);
     var days = dates.map(function (date, i) {
-      var step = (i + 1) / 5;
-      var target = lastClose + (fiveDayTarget - lastClose) * step;
-      var bandWidth = atrLast * (0.8 + 0.4 * (i + 1));
-      var lower = target - bandWidth;
-      var upper = target + bandWidth;
-      var dayPct = (target - lastClose) / lastClose;
-      var dir = score > 0.18 ? "up" : score < -0.18 ? "down" : "flat";
-      // Confidence decays with horizon (less certain further out)
-      var conf = Math.max(0.20, Math.min(0.95, Math.abs(score) * 1.5 + 0.35)) *
-                 Math.pow(0.93, i);
+      var step = (i + 1) / horizonDays;
+      var target = lastClose + (horizonTarget - lastClose) * step;
+      // Bands widen with sqrt(t)
+      var bandWidth = atrLast * (0.8 + 0.6 * Math.sqrt(i + 1));
+      var dir = target > lastClose * 1.001 ? "up"
+              : target < lastClose * 0.999 ? "down" : "flat";
+      // Confidence decays with horizon
+      var conf = Math.max(0.15, Math.min(0.95, Math.abs(score) * 1.5 + 0.35)) *
+                 Math.pow(0.95, i);
       return {
         date: date, dayIndex: i + 1,
-        target: target, lower: lower, upper: upper,
-        direction: dir, confidence: conf, pct: dayPct
+        target: target, lower: target - bandWidth, upper: target + bandWidth,
+        direction: dir, confidence: conf
       };
     });
 
     var direction = score > 0.18 ? "up" : score < -0.18 ? "down" : "flat";
     var label = direction === "up" ? "BULLISH" : direction === "down" ? "BEARISH" : "NEUTRAL";
 
-    // Composite confidence: vote agreement × magnitude
     var meanDir = votes.reduce(function (s, v) { return s + v.direction; }, 0) / Math.max(1, votes.length);
     var variance = votes.reduce(function (s, v) { return s + Math.pow(v.direction - meanDir, 2); }, 0) /
       Math.max(1, votes.length);
-    var confidence = Math.max(0.20, Math.min(0.95, Math.abs(score) * 1.6 + (1 - variance) * 0.3));
+    // Composite confidence shrinks as horizon extends.
+    var horizonDecay = Math.pow(0.92, (horizonDays / 5) - 1);
+    var confidence = Math.max(0.10, Math.min(0.95,
+      (Math.abs(score) * 1.6 + (1 - variance) * 0.3) * horizonDecay));
 
     var topVotes = votes.slice().sort(function (a, b) {
       return Math.abs(b.direction * b.weight) - Math.abs(a.direction * a.weight);
@@ -129,19 +154,28 @@
     }).join("   ·   ");
 
     var rationale =
-      "Composite score " + score.toFixed(2) + " across " + votes.length + " factors. " +
-      "Bulkowski's post-breakout statistics from the dominant pattern feed the projected target. " +
-      "Per-day confidence decays with horizon. Key drivers: " + bullets + ".";
+      "Composite score " + score.toFixed(2) + " across " + votes.length + " factors over a " +
+      horizonDays + "-session (" + (horizonDays / 5) + "-week) horizon. " +
+      "Targets diffuse with √time; per-day confidence decays further out. Drivers: " + bullets + ".";
 
+    var bandWidthEnd = atrLast * (0.8 + 0.6 * Math.sqrt(horizonDays));
     return {
       direction: direction, label: label, score: score, confidence: confidence,
-      target: fiveDayTarget, lower: fiveDayTarget - atrLast * 1.2, upper: fiveDayTarget + atrLast * 1.2,
-      days: days, rationale: rationale, lastClose: lastClose
+      target: horizonTarget,
+      lower: horizonTarget - bandWidthEnd, upper: horizonTarget + bandWidthEnd,
+      days: days, rationale: rationale, lastClose: lastClose,
+      horizonDays: horizonDays
     };
   }
 
-  // ─────────────────  Render  ─────────────────
-  function render(data, source) {
+  // ── Render ──
+  function render() {
+    var data = state.rows;
+    var symbol = state.symbol;
+    var horizonDays = state.horizonWeeks * 5;
+    var weekend = weekendSet(symbol);
+    var ccy = currencyOf(symbol);
+
     var closes = data.map(function (c) { return c.close; });
     var labels = data.map(function (c) { return c.date; });
 
@@ -151,13 +185,13 @@
     var macd = Indicators.macd(closes, 12, 26, 9);
     var atr14 = Indicators.atr(data, 14);
 
-    // Hero
     var last = data[data.length - 1];
     var prev = data[data.length - 2];
     var change = last.close - prev.close;
     var changePct = (change / prev.close) * 100;
 
     document.getElementById("lastPrice").textContent = fmtSAR(last.close);
+    document.querySelector(".hero-currency").textContent = ccy;
     var chEl = document.getElementById("lastChange");
     chEl.textContent = (change >= 0 ? "+" : "") + change.toFixed(2) +
       "  (" + (changePct >= 0 ? "+" : "") + changePct.toFixed(2) + "%)";
@@ -165,7 +199,6 @@
     chEl.classList.add(change >= 0 ? "up" : "down");
     document.getElementById("lastDate").textContent = "as of " + last.date;
 
-    // Stats row
     document.getElementById("statDayRange").textContent = fmtSAR(last.low) + " – " + fmtSAR(last.high);
     var minClose = Math.min.apply(null, closes), maxClose = Math.max.apply(null, closes);
     document.getElementById("stat52Range").textContent = fmtSAR(minClose) + " – " + fmtSAR(maxClose);
@@ -176,31 +209,45 @@
     var rsiLast = lastValid(rsi14);
     document.getElementById("statRsi").textContent = rsiLast != null ? rsiLast.toFixed(1) : "—";
 
+    // Brand
+    var bareSymbol = symbol.replace(/\.SR$/i, "");
+    document.getElementById("logoBox").textContent = bareSymbol.length <= 4 ? bareSymbol : bareSymbol.slice(0, 4);
+    document.getElementById("brandName").innerHTML = symbol +
+      ' <span class="brand-ar" id="brandAr">' + (state.symbol === "7203.SR" ? "شركة علم" : "") + '</span>';
+    document.getElementById("brandSub").textContent =
+      (isTadawul(symbol) ? "Tadawul · Saudi Stock Exchange · TADAWUL:" + bareSymbol
+                         : "Yahoo Finance: " + symbol);
+
     // Source pill
     var srcEl = document.getElementById("dataSource");
     srcEl.classList.remove("live", "fallback");
-    if (source === "live") {
+    if (state.source === "live") {
       srcEl.textContent = "live · " + last.date;
       srcEl.classList.add("live");
       srcEl.title = "Live data from Yahoo Finance · last close " + last.date;
     } else {
       srcEl.textContent = "demo · " + last.date;
       srcEl.classList.add("fallback");
-      srcEl.title = "Live fetch unavailable. Showing fallback anchored to verified Tadawul close on " + last.date + ".";
+      srcEl.title = "Live fetch unavailable. Showing fallback for " + symbol + " (" + last.date + ").";
     }
 
-    // ── Build forecast ──
+    // Forecast title with horizon
+    document.getElementById("forecastTitle").textContent =
+      state.horizonWeeks === 1 ? "Next-Week Forecast" : "Next " + state.horizonWeeks + "-Week Forecast";
+    document.getElementById("forecastSub").textContent =
+      "Day-by-day projection for the next " + horizonDays + " sessions (" + weekLabel(symbol) + ").";
+    document.getElementById("targetLabel").textContent = horizonDays + "-Session Target";
+
+    // ── Forecast ──
     var patterns = Patterns.detectAll(data);
-    var forecast = buildForecast(data, patterns, { sma20: sma20, sma50: sma50, rsi: rsi14, macd: macd, atr: atr14 });
+    var forecast = buildForecast(data, patterns, { sma20: sma20, sma50: sma50, rsi: rsi14, macd: macd, atr: atr14 }, horizonDays, weekend);
 
     // ── Price chart with forecast trail ──
     var fcLabels = forecast.days.map(function (d) { return d.date; });
     var fcSeries = forecast.days.map(function (d) { return d.target; });
     var fullLabels = labels.concat(fcLabels);
     var pad = function (arr) { return arr.concat(fcLabels.map(function () { return null; })); };
-    var fcAligned = labels.map(function () { return null; })
-      .concat(fcSeries);
-    // Make the forecast line connect from the last actual close
+    var fcAligned = labels.map(function () { return null; }).concat(fcSeries);
     fcAligned[labels.length - 1] = closes[closes.length - 1];
 
     if (chartRefs.price) chartRefs.price.destroy();
@@ -279,22 +326,21 @@
       });
     }
 
-    // ── Forecast UI ──
-    applyForecast(forecast);
+    applyForecast(forecast, ccy);
+    syncSegButtons();
   }
 
-  function applyForecast(f) {
+  function applyForecast(f, ccy) {
     var badge = document.getElementById("trendBadge");
     badge.textContent = f.label;
     badge.classList.remove("up", "down", "flat");
     badge.classList.add(f.direction);
 
-    document.getElementById("targetPrice").textContent = fmtSAR(f.target) + " SAR";
-    document.getElementById("targetRange").textContent = fmtSAR(f.lower) + " – " + fmtSAR(f.upper) + " SAR";
+    document.getElementById("targetPrice").textContent = fmtSAR(f.target) + " " + ccy;
+    document.getElementById("targetRange").textContent = fmtSAR(f.lower) + " – " + fmtSAR(f.upper) + " " + ccy;
     document.getElementById("compositeScore").textContent =
       (f.score >= 0 ? "+" : "") + f.score.toFixed(2) + "  (" + (f.score * 100).toFixed(0) + "/100)";
 
-    // Confidence gauge — 1 to 100%
     var pct = Math.max(1, Math.min(100, Math.round(f.confidence * 100)));
     var gauge = document.getElementById("confidenceGauge");
     var color = f.direction === "up" ? "var(--green)" : f.direction === "down" ? "var(--red)" : "var(--yellow)";
@@ -304,7 +350,6 @@
 
     document.getElementById("rationale").textContent = f.rationale;
 
-    // Per-day cards
     var grid = document.getElementById("dayCards");
     grid.innerHTML = "";
     f.days.forEach(function (d) {
@@ -320,7 +365,7 @@
           '<span class="day-arrow ' + dirClass + '">' + arrow + ' ' + (pct >= 0 ? "+" : "") + pct.toFixed(2) + '%</span>' +
         '</div>' +
         '<div class="day-date">' + d.date + '</div>' +
-        '<div class="day-target">' + fmtSAR(d.target) + '<span class="day-target-currency">SAR</span></div>' +
+        '<div class="day-target">' + fmtSAR(d.target) + '<span class="day-target-currency">' + ccy + '</span></div>' +
         '<div class="day-range">' + fmtSAR(d.lower) + ' – ' + fmtSAR(d.upper) + '</div>' +
         '<div class="day-conf">' +
           '<div class="day-conf-bar"><div class="day-conf-fill" style="width:' + conf + '%"></div></div>' +
@@ -330,26 +375,74 @@
     });
   }
 
-  // ─────────────────  Bootstrap  ─────────────────
-  render(window.STOCK_DATA, "fallback");
-
-  async function refresh() {
-    var btn = document.getElementById("refreshBtn");
-    btn.disabled = true;
-    var label = btn.querySelector(".btn-icon").nextSibling;
-    try {
-      var res = await window.LiveData.load();
-      if (res && res.rows && res.rows.length) render(res.rows, "live");
-    } catch (e) { /* keep fallback */ }
-    btn.disabled = false;
+  function syncSegButtons() {
+    document.querySelectorAll(".seg-btn").forEach(function (b) {
+      b.classList.toggle("active", parseInt(b.dataset.weeks, 10) === state.horizonWeeks);
+    });
   }
 
-  document.getElementById("refreshBtn").addEventListener("click", refresh);
+  // ── Bootstrap ──
+  document.getElementById("symbolInput").value = state.symbol.replace(/\.SR$/i, "");
+  render();
 
-  // Chart toggle (persisted)
+  async function loadSymbol(symbolRaw) {
+    var sym = normaliseSymbol(symbolRaw);
+    if (!sym) return;
+    var btn = document.getElementById("loadSymbolBtn");
+    btn.disabled = true;
+    btn.textContent = "Loading…";
+    state.symbol = sym;
+    var res = null;
+    try { res = await window.LiveData.load(sym); } catch (e) {}
+    if (res && res.rows && res.rows.length) {
+      state.rows = res.rows;
+      state.source = "live";
+    } else if (sym === "7203.SR") {
+      state.rows = window.STOCK_DATA;
+      state.source = "fallback";
+    } else {
+      // No fallback for non-7203; surface a minimal message via the source pill
+      var srcEl = document.getElementById("dataSource");
+      srcEl.classList.remove("live", "fallback");
+      srcEl.textContent = "no data for " + sym;
+      srcEl.title = "Live fetch failed and no embedded fallback exists for " + sym +
+        ". Try again from a network where the CORS proxies are reachable.";
+      btn.disabled = false; btn.textContent = "Load";
+      return;
+    }
+    render();
+    btn.disabled = false; btn.textContent = "Load";
+  }
+
+  document.getElementById("loadSymbolBtn").addEventListener("click", function () {
+    loadSymbol(document.getElementById("symbolInput").value);
+  });
+  document.getElementById("symbolInput").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") loadSymbol(e.target.value);
+  });
+  document.getElementById("symbolPreset").addEventListener("change", function (e) {
+    if (!e.target.value) return;
+    document.getElementById("symbolInput").value = e.target.value;
+    loadSymbol(e.target.value);
+    e.target.value = "";
+  });
+
+  document.getElementById("refreshBtn").addEventListener("click", function () {
+    loadSymbol(state.symbol.replace(/\.SR$/i, ""));
+  });
+
+  // Horizon segmented control
+  document.querySelectorAll(".seg-btn").forEach(function (b) {
+    b.addEventListener("click", function () {
+      state.horizonWeeks = parseInt(b.dataset.weeks, 10);
+      localStorage.setItem("elm7203.horizon", String(state.horizonWeeks));
+      render();
+    });
+  });
+
+  // Chart toggle
   var chartWrap = document.getElementById("priceChartWrap");
   var toggleBtn = document.getElementById("chartToggle");
-  var STORAGE_KEY = "elm7203.chartHidden";
   function applyToggle(hidden) {
     if (hidden) {
       chartWrap.classList.add("hidden");
@@ -362,12 +455,13 @@
       if (chartRefs.price) chartRefs.price.resize();
     }
   }
-  applyToggle(localStorage.getItem(STORAGE_KEY) === "1");
+  applyToggle(state.chartHidden);
   toggleBtn.addEventListener("click", function () {
-    var nowHidden = !chartWrap.classList.contains("hidden");
-    localStorage.setItem(STORAGE_KEY, nowHidden ? "1" : "0");
-    applyToggle(nowHidden);
+    state.chartHidden = !chartWrap.classList.contains("hidden");
+    localStorage.setItem("elm7203.chartHidden", state.chartHidden ? "1" : "0");
+    applyToggle(state.chartHidden);
   });
 
-  refresh();
+  // Auto-trigger live fetch on first load
+  loadSymbol(state.symbol.replace(/\.SR$/i, ""));
 })();

@@ -14,16 +14,35 @@
 
 <header class="topbar">
   <div class="brand">
-    <div class="logo">7203</div>
+    <div class="logo" id="logoBox">7203</div>
     <div class="brand-text">
-      <div class="brand-name">Elm Company <span class="brand-ar">شركة علم</span></div>
-      <div class="brand-sub">Tadawul · Saudi Stock Exchange · TADAWUL:7203</div>
+      <div class="brand-name" id="brandName">Elm Company <span class="brand-ar" id="brandAr">شركة علم</span></div>
+      <div class="brand-sub" id="brandSub">Tadawul · Saudi Stock Exchange · TADAWUL:7203</div>
     </div>
   </div>
-  <div class="topbar-actions">
+  <div class="topbar-controls">
+    <div class="symbol-switcher">
+      <input id="symbolInput" class="symbol-input" type="text" inputmode="latin" autocomplete="off"
+             spellcheck="false" placeholder="Symbol (e.g. 7203 or 2222)" />
+      <select id="symbolPreset" class="symbol-preset" title="Popular Tadawul stocks">
+        <option value="">Popular…</option>
+        <option value="7203">7203 · Elm Company</option>
+        <option value="2222">2222 · Saudi Aramco</option>
+        <option value="1120">1120 · Al Rajhi Bank</option>
+        <option value="2010">2010 · SABIC</option>
+        <option value="7010">7010 · STC</option>
+        <option value="1180">1180 · SNB</option>
+        <option value="7202">7202 · Solutions by stc</option>
+        <option value="1010">1010 · Riyad Bank</option>
+        <option value="4030">4030 · Bahri</option>
+        <option value="4321">4321 · Cenomi Centers</option>
+        <option value="2380">2380 · Petro Rabigh</option>
+      </select>
+      <button id="loadSymbolBtn" class="btn btn-primary btn-sm" type="button">Load</button>
+    </div>
     <span id="dataSource" class="pill" title="Data source">demo</span>
-    <button id="refreshBtn" class="btn btn-primary" type="button">
-      <span class="btn-icon">↻</span> Refresh
+    <button id="refreshBtn" class="btn btn-ghost btn-sm" type="button" title="Refresh live data">
+      <span class="btn-icon">↻</span>
     </button>
   </div>
 </header>
@@ -112,10 +131,18 @@
   <section class="card forecast-card">
     <div class="card-head">
       <div>
-        <h2>Next-Week Forecast</h2>
-        <p class="card-sub">Day-by-day projection for the next 5 Tadawul sessions (Sun–Thu).</p>
+        <h2 id="forecastTitle">Next-Week Forecast</h2>
+        <p class="card-sub" id="forecastSub">Day-by-day projection for the next 5 Tadawul sessions (Sun–Thu).</p>
       </div>
-      <div id="trendBadge" class="trend-badge">—</div>
+      <div class="forecast-head-controls">
+        <div class="seg" role="tablist" aria-label="Forecast horizon">
+          <button class="seg-btn" data-weeks="1" type="button">1W</button>
+          <button class="seg-btn" data-weeks="2" type="button">2W</button>
+          <button class="seg-btn" data-weeks="3" type="button">3W</button>
+          <button class="seg-btn" data-weeks="4" type="button">4W</button>
+        </div>
+        <div id="trendBadge" class="trend-badge">—</div>
+      </div>
     </div>
 
     <div class="forecast-summary">
@@ -129,7 +156,7 @@
       </div>
       <div class="summary-stats">
         <div class="sum-stat">
-          <div class="sum-label">5-Session Target</div>
+          <div class="sum-label" id="targetLabel">5-Session Target</div>
           <div class="sum-value" id="targetPrice">—</div>
         </div>
         <div class="sum-stat">
