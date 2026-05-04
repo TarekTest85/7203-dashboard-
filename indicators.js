@@ -1,4 +1,5 @@
-// Technical indicators: SMA, EMA, RSI, MACD, ATR, swing pivots.
+// Technical indicators: SMA, EMA, RSI, MACD, ATR, Bollinger, ADX,
+// ROC (rate of change), Stochastic, daily returns, σ, swing pivots.
 (function () {
   function sma(values, period) {
     var out = new Array(values.length).fill(null);
@@ -110,5 +111,136 @@
     return { highs: highs, lows: lows };
   }
 
-  window.Indicators = { sma: sma, ema: ema, rsi: rsi, macd: macd, atr: atr, swings: swings };
+  // Standard deviation over a rolling window.
+  function rollingStdev(values, period) {
+    var out = new Array(values.length).fill(null);
+    for (var i = period - 1; i < values.length; i++) {
+      var mean = 0;
+      for (var j = i - period + 1; j <= i; j++) mean += values[j];
+      mean /= period;
+      var sq = 0;
+      for (var k = i - period + 1; k <= i; k++) sq += Math.pow(values[k] - mean, 2);
+      out[i] = Math.sqrt(sq / period);
+    }
+    return out;
+  }
+
+  // Bollinger Bands (period=20, k=2 by default). Returns mid (SMA),
+  // upper, lower, and a z-score (how many σ the price sits from the mid).
+  function bollinger(values, period, k) {
+    period = period || 20; k = k == null ? 2 : k;
+    var mid = sma(values, period);
+    var sd = rollingStdev(values, period);
+    var upper = [], lower = [], z = [];
+    for (var i = 0; i < values.length; i++) {
+      if (mid[i] == null || sd[i] == null) {
+        upper.push(null); lower.push(null); z.push(null);
+      } else {
+        upper.push(mid[i] + k * sd[i]);
+        lower.push(mid[i] - k * sd[i]);
+        z.push(sd[i] === 0 ? 0 : (values[i] - mid[i]) / sd[i]);
+      }
+    }
+    return { mid: mid, upper: upper, lower: lower, z: z };
+  }
+
+  // ADX (trend strength) using Wilder smoothing. Returns ADX series (no
+  // +DI/-DI breakdown — ADX magnitude is what we use for regime).
+  function adx(candles, period) {
+    period = period || 14;
+    var len = candles.length;
+    var tr = new Array(len), plusDM = new Array(len), minusDM = new Array(len);
+    tr[0] = candles[0].high - candles[0].low;
+    plusDM[0] = 0; minusDM[0] = 0;
+    for (var i = 1; i < len; i++) {
+      var h = candles[i].high, l = candles[i].low, pc = candles[i - 1].close;
+      tr[i] = Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc));
+      var up = candles[i].high - candles[i - 1].high;
+      var dn = candles[i - 1].low - candles[i].low;
+      plusDM[i]  = (up > dn && up > 0)  ? up : 0;
+      minusDM[i] = (dn > up && dn > 0) ? dn : 0;
+    }
+    function wilder(src) {
+      var out = new Array(len).fill(null);
+      var sum = 0;
+      for (var i = 0; i < len; i++) {
+        if (i < period) { sum += src[i]; if (i === period - 1) out[i] = sum; }
+        else { out[i] = out[i - 1] - out[i - 1] / period + src[i]; }
+      }
+      return out;
+    }
+    var trN = wilder(tr), pN = wilder(plusDM), mN = wilder(minusDM);
+    var dx = new Array(len).fill(null);
+    for (var j = 0; j < len; j++) {
+      if (trN[j] == null || trN[j] === 0) continue;
+      var pdi = 100 * pN[j] / trN[j];
+      var mdi = 100 * mN[j] / trN[j];
+      var den = pdi + mdi;
+      dx[j] = den === 0 ? 0 : 100 * Math.abs(pdi - mdi) / den;
+    }
+    var adxArr = new Array(len).fill(null);
+    var firstAdx = period * 2 - 1;
+    if (firstAdx < len) {
+      var seed = 0, n = 0;
+      for (var k2 = period; k2 <= firstAdx; k2++) { if (dx[k2] != null) { seed += dx[k2]; n++; } }
+      adxArr[firstAdx] = n ? seed / n : null;
+      for (var m = firstAdx + 1; m < len; m++) {
+        if (adxArr[m - 1] == null || dx[m] == null) continue;
+        adxArr[m] = (adxArr[m - 1] * (period - 1) + dx[m]) / period;
+      }
+    }
+    return adxArr;
+  }
+
+  // Rate of change (%). roc[i] = (price[i] / price[i-period] - 1) * 100.
+  function roc(values, period) {
+    var out = new Array(values.length).fill(null);
+    for (var i = period; i < values.length; i++) {
+      if (values[i - period] === 0) continue;
+      out[i] = (values[i] / values[i - period] - 1) * 100;
+    }
+    return out;
+  }
+
+  // Stochastic oscillator. %K = 100 * (close - lowK) / (highK - lowK).
+  function stochastic(candles, kPeriod, dPeriod) {
+    kPeriod = kPeriod || 14; dPeriod = dPeriod || 3;
+    var k = new Array(candles.length).fill(null);
+    for (var i = kPeriod - 1; i < candles.length; i++) {
+      var hi = -Infinity, lo = Infinity;
+      for (var j = i - kPeriod + 1; j <= i; j++) {
+        if (candles[j].high > hi) hi = candles[j].high;
+        if (candles[j].low < lo) lo = candles[j].low;
+      }
+      var range = hi - lo;
+      k[i] = range === 0 ? 50 : 100 * (candles[i].close - lo) / range;
+    }
+    var d = sma(k.map(function (v) { return v == null ? 0 : v; }), dPeriod);
+    for (var x = 0; x < k.length; x++) if (k[x] == null) d[x] = null;
+    return { k: k, d: d };
+  }
+
+  // Daily simple returns (close-to-close).
+  function dailyReturns(values) {
+    var out = [];
+    for (var i = 1; i < values.length; i++) {
+      out.push((values[i] - values[i - 1]) / values[i - 1]);
+    }
+    return out;
+  }
+
+  // Sample standard deviation of an array.
+  function stdev(values) {
+    if (!values.length) return 0;
+    var mean = values.reduce(function (a, b) { return a + b; }, 0) / values.length;
+    var sq = values.reduce(function (a, b) { return a + Math.pow(b - mean, 2); }, 0);
+    return Math.sqrt(sq / Math.max(1, values.length - 1));
+  }
+
+  window.Indicators = {
+    sma: sma, ema: ema, rsi: rsi, macd: macd, atr: atr,
+    bollinger: bollinger, adx: adx, roc: roc, stochastic: stochastic,
+    dailyReturns: dailyReturns, stdev: stdev, rollingStdev: rollingStdev,
+    swings: swings
+  };
 })();

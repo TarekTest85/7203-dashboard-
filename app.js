@@ -64,6 +64,27 @@
   }
 
   // ── Forecast logic ──
+  // Compute every indicator we'll use once. Same shape used for the
+  // realtime forecast and for each step of the walk-forward backtest.
+  function computeIndicators(candles) {
+    var closes = candles.map(function (c) { return c.close; });
+    return {
+      closes: closes,
+      sma20: Indicators.sma(closes, 20),
+      sma50: Indicators.sma(closes, 50),
+      rsi: Indicators.rsi(closes, 14),
+      macd: Indicators.macd(closes, 12, 26, 9),
+      atr: Indicators.atr(candles, 14),
+      bb: Indicators.bollinger(closes, 20, 2),
+      adx: Indicators.adx(candles, 14),
+      roc5: Indicators.roc(closes, 5),
+      roc10: Indicators.roc(closes, 10),
+      roc20: Indicators.roc(closes, 20),
+      stoch: Indicators.stochastic(candles, 14, 3),
+      sigma: Indicators.stdev(Indicators.dailyReturns(closes).slice(-60))
+    };
+  }
+
   function buildVotes(candles, patterns, ind) {
     var lastClose = candles[candles.length - 1].close;
     var rsiLast = lastValid(ind.rsi);
@@ -72,34 +93,139 @@
     var macdLast = lastValid(ind.macd.line);
     var sigLast = lastValid(ind.macd.signal);
     var histLast = lastValid(ind.macd.hist);
+    var bbZ = lastValid(ind.bb.z);
+    var adxLast = lastValid(ind.adx);
+    var roc5 = lastValid(ind.roc5);
+    var roc10 = lastValid(ind.roc10);
+    var roc20 = lastValid(ind.roc20);
+    var stochK = lastValid(ind.stoch.k);
+    var stochD = lastValid(ind.stoch.d);
 
     var votes = [];
+
+    // ── Bulkowski patterns: stage-discounted ──
+    // A "forming" pattern is statistically less reliable than a confirmed
+    // breakout. Halve its weight; double-down (1.2×) on confirmed ones.
     patterns.forEach(function (p) {
-      var weight = p.confidence * (p.stats ? Math.min(1, Math.abs(p.stats.avgMove) / 30) : 0.5);
+      var stageMul = (p.stage === "broken-up" || p.stage === "broken-down") ? 1.2
+                   : (p.stage === "forming" ? 0.5 : 1.0);
+      var statMul = p.stats ? Math.min(1, Math.abs(p.stats.avgMove) / 30) : 0.5;
+      var weight = p.confidence * statMul * stageMul;
       var dir = p.bias === "bull" ? 1 : p.bias === "bear" ? -1 : 0;
-      votes.push({ source: "Pattern: " + p.name, direction: dir, weight: weight });
+      votes.push({ source: "Pattern: " + p.name + " (" + p.stage + ")", direction: dir, weight: weight });
     });
 
+    // ── Trend regime: SMA stack + ADX strength ──
+    // ADX < 20 → choppy; weight trend votes lower. ADX > 25 → strong trend.
+    var trendAmp = adxLast == null ? 0.6 : Math.max(0.25, Math.min(1.1, (adxLast - 12) / 20));
     if (sma20Last != null && sma50Last != null) {
       if (lastClose > sma20Last && sma20Last > sma50Last)
-        votes.push({ source: "Price > SMA20 > SMA50 (uptrend)", direction: 1, weight: 0.6 });
+        votes.push({ source: "Uptrend stack (ADX " + (adxLast||0).toFixed(0) + ")", direction: 1, weight: 0.6 * trendAmp });
       else if (lastClose < sma20Last && sma20Last < sma50Last)
-        votes.push({ source: "Price < SMA20 < SMA50 (downtrend)", direction: -1, weight: 0.6 });
+        votes.push({ source: "Downtrend stack (ADX " + (adxLast||0).toFixed(0) + ")", direction: -1, weight: 0.6 * trendAmp });
       else
         votes.push({ source: "SMA stack mixed", direction: 0, weight: 0.2 });
     }
-    if (rsiLast != null) {
-      if (rsiLast >= 70) votes.push({ source: "RSI overbought (" + rsiLast.toFixed(0) + ")", direction: -0.5, weight: 0.4 });
-      else if (rsiLast <= 30) votes.push({ source: "RSI oversold (" + rsiLast.toFixed(0) + ")", direction: 0.5, weight: 0.4 });
-      else if (rsiLast > 55) votes.push({ source: "RSI bullish (" + rsiLast.toFixed(0) + ")", direction: 0.3, weight: 0.3 });
-      else if (rsiLast < 45) votes.push({ source: "RSI bearish (" + rsiLast.toFixed(0) + ")", direction: -0.3, weight: 0.3 });
+
+    // ── Momentum: 5/10/20-day ROC, weighted by recency ──
+    if (roc5 != null) {
+      var rocDir = Math.sign(roc5);
+      var rocMag = Math.min(1, Math.abs(roc5) / 5); // 5% over 5d → full weight
+      votes.push({ source: "Momentum 5d (" + roc5.toFixed(1) + "%)", direction: rocDir, weight: 0.5 * rocMag });
     }
+    if (roc10 != null) {
+      var rd = Math.sign(roc10);
+      var rm = Math.min(1, Math.abs(roc10) / 8);
+      votes.push({ source: "Momentum 10d (" + roc10.toFixed(1) + "%)", direction: rd, weight: 0.4 * rm });
+    }
+    if (roc20 != null) {
+      var rd2 = Math.sign(roc20);
+      var rm2 = Math.min(1, Math.abs(roc20) / 12);
+      votes.push({ source: "Momentum 20d (" + roc20.toFixed(1) + "%)", direction: rd2, weight: 0.3 * rm2 });
+    }
+
+    // ── RSI: extremes (mean revert) and trend (continuation) ──
+    if (rsiLast != null) {
+      if (rsiLast >= 75) votes.push({ source: "RSI extreme overbought (" + rsiLast.toFixed(0) + ")", direction: -1, weight: 0.45 });
+      else if (rsiLast >= 70) votes.push({ source: "RSI overbought (" + rsiLast.toFixed(0) + ")", direction: -0.5, weight: 0.35 });
+      else if (rsiLast <= 25) votes.push({ source: "RSI extreme oversold (" + rsiLast.toFixed(0) + ")", direction: 1, weight: 0.45 });
+      else if (rsiLast <= 30) votes.push({ source: "RSI oversold (" + rsiLast.toFixed(0) + ")", direction: 0.5, weight: 0.35 });
+      else if (rsiLast > 55) votes.push({ source: "RSI bullish (" + rsiLast.toFixed(0) + ")", direction: 0.3, weight: 0.25 });
+      else if (rsiLast < 45) votes.push({ source: "RSI bearish (" + rsiLast.toFixed(0) + ")", direction: -0.3, weight: 0.25 });
+    }
+
+    // ── MACD: with histogram strength ──
     if (macdLast != null && sigLast != null) {
       var macdDir = macdLast > sigLast ? 1 : -1;
       var strength = Math.min(1, Math.abs(histLast || 0) / (lastClose * 0.005));
-      votes.push({ source: "MACD vs Signal", direction: macdDir, weight: 0.3 + 0.3 * strength });
+      votes.push({ source: "MACD " + (macdDir > 0 ? "above" : "below") + " signal", direction: macdDir, weight: 0.3 + 0.3 * strength });
     }
+
+    // ── Bollinger Band z-score: mean revert at extremes, continuation
+    //    near the middle in a trending regime ──
+    if (bbZ != null) {
+      if (bbZ >= 2)        votes.push({ source: "BB z " + bbZ.toFixed(1) + " (above upper)", direction: -0.6, weight: 0.4 });
+      else if (bbZ <= -2)  votes.push({ source: "BB z " + bbZ.toFixed(1) + " (below lower)", direction: 0.6, weight: 0.4 });
+      else if (Math.abs(bbZ) < 0.4 && adxLast != null && adxLast > 22) {
+        // In a trend, riding the middle is bullish/bearish in the trend's direction
+        var trendDir = (sma20Last != null && sma50Last != null && sma20Last > sma50Last) ? 1
+                     : (sma20Last != null && sma50Last != null && sma20Last < sma50Last) ? -1 : 0;
+        if (trendDir !== 0) votes.push({ source: "BB middle in trend", direction: trendDir, weight: 0.2 });
+      }
+    }
+
+    // ── Stochastic: cross + zone ──
+    if (stochK != null && stochD != null) {
+      if (stochK > 80 && stochD > 80) votes.push({ source: "Stochastic overbought", direction: -0.4, weight: 0.25 });
+      else if (stochK < 20 && stochD < 20) votes.push({ source: "Stochastic oversold", direction: 0.4, weight: 0.25 });
+      else votes.push({ source: "Stochastic " + (stochK > stochD ? "K>D" : "K<D"), direction: stochK > stochD ? 0.3 : -0.3, weight: 0.15 });
+    }
+
     return votes;
+  }
+
+  function summariseScore(votes) {
+    var totalWeight = votes.reduce(function (s, v) { return s + v.weight; }, 0) || 1;
+    var score = votes.reduce(function (s, v) { return s + v.direction * v.weight; }, 0) / totalWeight;
+    var meanDir = votes.reduce(function (s, v) { return s + v.direction; }, 0) / Math.max(1, votes.length);
+    var variance = votes.reduce(function (s, v) { return s + Math.pow(v.direction - meanDir, 2); }, 0) /
+      Math.max(1, votes.length);
+    return { score: score, variance: variance, totalWeight: totalWeight };
+  }
+
+  // Walk-forward backtest. At each historical bar with enough indicator
+  // warm-up, recompute votes using only data up to that bar (no look-
+  // ahead), classify direction, and check against the actual horizon
+  // return. Returns hit-rate and mean abs %-error of the score-implied
+  // target. Used to calibrate displayed confidence.
+  function backtest(candles, horizonDays) {
+    var WARMUP = 60;
+    var hits = 0, total = 0, sumAbsErr = 0, errN = 0;
+    var deadband = 0.005; // ±0.5% considered "flat"
+    for (var i = WARMUP; i < candles.length - horizonDays; i++) {
+      var window = candles.slice(0, i + 1);
+      var ind = computeIndicators(window);
+      var pats = window.Patterns ? [] : Patterns.detectAll(window);
+      var votes = buildVotes(window, pats, ind);
+      if (votes.length < 3) continue;
+      var s = summariseScore(votes).score;
+      var atrLast = lastValid(ind.atr) || window[i].close * 0.015;
+      var horizonScale = Math.sqrt(horizonDays / 5);
+      var pct = s * (2 * atrLast / window[i].close) * horizonScale;
+
+      var actual = (candles[i + horizonDays].close - candles[i].close) / candles[i].close;
+      var predDir = s > 0.18 ? 1 : s < -0.18 ? -1 : 0;
+      var actDir  = actual > deadband ? 1 : actual < -deadband ? -1 : 0;
+      total++;
+      if (predDir === actDir) hits++;
+      sumAbsErr += Math.abs(actual - pct);
+      errN++;
+    }
+    return {
+      hitRate: total > 0 ? hits / total : null,
+      count: total,
+      mape: errN > 0 ? sumAbsErr / errN : null
+    };
   }
 
   function buildForecast(candles, patterns, ind, horizonDays, weekend) {
@@ -108,28 +234,37 @@
     var atrLast = lastValid(ind.atr) || lastClose * 0.015;
 
     var votes = buildVotes(candles, patterns, ind);
-    var totalWeight = votes.reduce(function (s, v) { return s + v.weight; }, 0) || 1;
-    var score = votes.reduce(function (s, v) { return s + v.direction * v.weight; }, 0) / totalWeight;
+    var s = summariseScore(votes);
+    var score = s.score;
+    var variance = s.variance;
 
-    // Horizon scaling: realistic diffusion ≈ sqrt(time). 1 week ≈ 5 sessions.
+    // Horizon scaling on the score-implied move (√t diffusion).
     var horizonScale = Math.sqrt(horizonDays / 5);
     var horizonPct = score * (2 * atrLast / lastClose) * horizonScale;
     var horizonTarget = lastClose * (1 + horizonPct);
 
+    // σ-based diffusion bands. σ_daily comes from the last 60 daily
+    // log-ish returns. Day-i 80% interval ≈ ±1.28·σ·√i around the drift.
+    var sigma = ind.sigma || 0.012; // fallback 1.2% daily vol
+    var Z80 = 1.28;
+    var muDaily = horizonPct / horizonDays;
+
     var dates = nextTradingDays(lastBar.date, horizonDays, weekend);
     var days = dates.map(function (date, i) {
-      var step = (i + 1) / horizonDays;
-      var target = lastClose + (horizonTarget - lastClose) * step;
-      // Bands widen with sqrt(t)
-      var bandWidth = atrLast * (0.8 + 0.6 * Math.sqrt(i + 1));
+      var t = i + 1;
+      var target = lastClose * (1 + muDaily * t);
+      var bandPct = Z80 * sigma * Math.sqrt(t);
+      var lower = target - lastClose * bandPct;
+      var upper = target + lastClose * bandPct;
       var dir = target > lastClose * 1.001 ? "up"
               : target < lastClose * 0.999 ? "down" : "flat";
-      // Confidence decays with horizon
-      var conf = Math.max(0.15, Math.min(0.95, Math.abs(score) * 1.5 + 0.35)) *
-                 Math.pow(0.95, i);
+      // Per-day confidence decays with horizon and is gated by score
+      // strength + a humility cap.
+      var conf = Math.max(0.10, Math.min(0.85, Math.abs(score) * 1.4 + 0.30)) *
+                 Math.pow(0.94, i);
       return {
-        date: date, dayIndex: i + 1,
-        target: target, lower: target - bandWidth, upper: target + bandWidth,
+        date: date, dayIndex: t,
+        target: target, lower: lower, upper: upper,
         direction: dir, confidence: conf
       };
     });
@@ -137,34 +272,59 @@
     var direction = score > 0.18 ? "up" : score < -0.18 ? "down" : "flat";
     var label = direction === "up" ? "BULLISH" : direction === "down" ? "BEARISH" : "NEUTRAL";
 
-    var meanDir = votes.reduce(function (s, v) { return s + v.direction; }, 0) / Math.max(1, votes.length);
-    var variance = votes.reduce(function (s, v) { return s + Math.pow(v.direction - meanDir, 2); }, 0) /
-      Math.max(1, votes.length);
-    // Composite confidence shrinks as horizon extends.
-    var horizonDecay = Math.pow(0.92, (horizonDays / 5) - 1);
-    var confidence = Math.max(0.10, Math.min(0.95,
-      (Math.abs(score) * 1.6 + (1 - variance) * 0.3) * horizonDecay));
+    // ── Confidence calibration ──
+    // 1) Base = |score| × agreement × vote-count factor × regime factor
+    var voteCountFactor = 1 - 1 / (votes.length + 1);     // more votes → more weight
+    var agreementFactor = 1 - Math.min(1, variance);      // tight directional vote = high
+    // High-vol regime → less confident: compare current ATR to recent median.
+    var atrMed = (function () {
+      var vals = ind.atr.filter(function (v) { return v != null; }).slice(-60);
+      vals.sort(function (a, b) { return a - b; });
+      return vals.length ? vals[Math.floor(vals.length / 2)] : atrLast;
+    })();
+    var regimeFactor = atrMed ? Math.max(0.6, Math.min(1, atrMed / atrLast)) : 1;
+    var horizonDecay = Math.pow(0.90, (horizonDays / 5) - 1);
+
+    var rawConf = Math.abs(score) * 1.4 * voteCountFactor * agreementFactor * regimeFactor * horizonDecay
+                  + 0.10 * agreementFactor;
+
+    // 2) Calibrate against backtest hit rate (weighted blend). Caps the
+    //    displayed confidence so an unproven model can't show 95%.
+    var bt = backtest(candles, horizonDays);
+    var blended = bt.hitRate != null
+      ? rawConf * 0.55 + bt.hitRate * 0.45
+      : rawConf;
+    var confidence = Math.max(0.05, Math.min(0.88, blended));
 
     var topVotes = votes.slice().sort(function (a, b) {
       return Math.abs(b.direction * b.weight) - Math.abs(a.direction * a.weight);
     });
-    var bullets = topVotes.slice(0, 4).map(function (v) {
+    var bullets = topVotes.slice(0, 5).map(function (v) {
       var arrow = v.direction > 0 ? "↑" : v.direction < 0 ? "↓" : "·";
       return arrow + " " + v.source;
     }).join("   ·   ");
 
-    var rationale =
-      "Composite score " + score.toFixed(2) + " across " + votes.length + " factors over a " +
-      horizonDays + "-session (" + (horizonDays / 5) + "-week) horizon. " +
-      "Targets diffuse with √time; per-day confidence decays further out. Drivers: " + bullets + ".";
+    var btTxt = bt.hitRate != null
+      ? "Walk-forward backtest on this series: " + Math.round(bt.hitRate * 100) +
+        "% direction hit-rate over " + bt.count + " " + horizonDays + "-session windows."
+      : "Insufficient history for a backtest at this horizon.";
 
-    var bandWidthEnd = atrLast * (0.8 + 0.6 * Math.sqrt(horizonDays));
+    var rationale =
+      "Composite score " + score.toFixed(2) + " across " + votes.length + " factors over " +
+      horizonDays + " sessions (" + (horizonDays / 5) + "-week horizon). " +
+      "Targets use √t diffusion drift; per-day bands are ±1.28·σ·√t (≈80% interval) using σ=" +
+      (sigma * 100).toFixed(2) + "% daily. Confidence is calibrated against the in-sample " +
+      "backtest hit-rate. Drivers: " + bullets + ". " + btTxt;
+
+    var bandPctEnd = Z80 * sigma * Math.sqrt(horizonDays);
+    var bandWidthEnd = lastClose * bandPctEnd;
     return {
       direction: direction, label: label, score: score, confidence: confidence,
       target: horizonTarget,
       lower: horizonTarget - bandWidthEnd, upper: horizonTarget + bandWidthEnd,
       days: days, rationale: rationale, lastClose: lastClose,
-      horizonDays: horizonDays
+      horizonDays: horizonDays,
+      backtest: bt
     };
   }
 
@@ -177,14 +337,10 @@
     var weekend = weekendSet(symbol);
     var ccy = currencyOf(symbol);
 
-    var closes = data.map(function (c) { return c.close; });
+    var ind = computeIndicators(data);
+    var closes = ind.closes;
     var labels = data.map(function (c) { return c.date; });
-
-    var sma20 = Indicators.sma(closes, 20);
-    var sma50 = Indicators.sma(closes, 50);
-    var rsi14 = Indicators.rsi(closes, 14);
-    var macd = Indicators.macd(closes, 12, 26, 9);
-    var atr14 = Indicators.atr(data, 14);
+    var sma20 = ind.sma20, sma50 = ind.sma50, rsi14 = ind.rsi, macd = ind.macd;
 
     var last = data[data.length - 1];
     var prev = data[data.length - 2];
@@ -241,7 +397,7 @@
 
     // ── Forecast ──
     var patterns = Patterns.detectAll(data);
-    var forecast = buildForecast(data, patterns, { sma20: sma20, sma50: sma50, rsi: rsi14, macd: macd, atr: atr14 }, horizonDays, weekend);
+    var forecast = buildForecast(data, patterns, ind, horizonDays, weekend);
 
     // ── Price chart with forecast trail ──
     var fcLabels = forecast.days.map(function (d) { return d.date; });
@@ -404,6 +560,19 @@
     gauge.style.setProperty("--pct", pct);
     gauge.style.setProperty("--color", color);
     document.getElementById("confidencePct").textContent = pct + "%";
+
+    var bt = f.backtest;
+    var btEl = document.getElementById("backtestLine");
+    if (btEl) {
+      if (bt && bt.hitRate != null) {
+        btEl.innerHTML =
+          "Backtest hit rate <strong>" + Math.round(bt.hitRate * 100) +
+          "%</strong> over <strong>" + bt.count + "</strong> walks · MAPE " +
+          (bt.mape != null ? (bt.mape * 100).toFixed(1) + "%" : "—");
+      } else {
+        btEl.textContent = "Backtest: insufficient history";
+      }
+    }
 
     document.getElementById("rationale").textContent = f.rationale;
 
