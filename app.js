@@ -228,6 +228,78 @@
     };
   }
 
+  // Standard normal sample via Box-Muller. Used for GBM Monte Carlo.
+  function randn() {
+    var u = 1 - Math.random();
+    var v = Math.random();
+    return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+  }
+
+  // GBM-style Monte Carlo. Steps log returns r ~ N(μ, σ²) per session.
+  // Records: per-day percentiles, % of paths that touched the target,
+  // and median first-hit day among paths that hit. Cheap (~80k ops for
+  // 4000×20).
+  function monteCarlo(lastClose, muDaily, sigmaDaily, horizonDays, target, paths) {
+    paths = paths || 4000;
+    var perDay = [];
+    for (var k = 0; k < horizonDays; k++) perDay.push(new Float64Array(paths));
+    var firstHitDays = [];
+    var hitsAbove = target > lastClose;
+    for (var p = 0; p < paths; p++) {
+      var price = lastClose;
+      var hit = -1;
+      for (var t = 0; t < horizonDays; t++) {
+        var z = randn();
+        price = price * Math.exp(muDaily - 0.5 * sigmaDaily * sigmaDaily + sigmaDaily * z);
+        perDay[t][p] = price;
+        if (hit === -1 && ((hitsAbove && price >= target) || (!hitsAbove && price <= target))) {
+          hit = t + 1;
+        }
+      }
+      if (hit !== -1) firstHitDays.push(hit);
+    }
+    function pct(arr, q) {
+      var sorted = Array.from(arr).sort(function (a, b) { return a - b; });
+      return sorted[Math.max(0, Math.min(sorted.length - 1, Math.floor(q * sorted.length)))];
+    }
+    firstHitDays.sort(function (a, b) { return a - b; });
+    return {
+      paths: paths,
+      p10ByDay: perDay.map(function (a) { return pct(a, 0.10); }),
+      p50ByDay: perDay.map(function (a) { return pct(a, 0.50); }),
+      p90ByDay: perDay.map(function (a) { return pct(a, 0.90); }),
+      probHit: firstHitDays.length / paths,
+      medianFirstHit: firstHitDays.length >= paths * 0.30
+        ? firstHitDays[Math.floor(firstHitDays.length / 2)]
+        : null,
+      meanFirstHit: firstHitDays.length >= paths * 0.30
+        ? firstHitDays.reduce(function (a, b) { return a + b; }, 0) / firstHitDays.length
+        : null
+    };
+  }
+
+  // Detect the next swing-based support/resistance level the price would
+  // run into in `dir` direction. Helps anchor the projected target to a
+  // real S/R level when one is nearer than the pure drift extrapolation.
+  function nextKeyLevel(candles, dir, lastClose) {
+    var swings = Indicators.swings(candles, 5);
+    var levels = [];
+    if (dir > 0) {
+      // Bullish: nearest swing high above current price
+      swings.highs.forEach(function (h) {
+        if (h.price > lastClose * 1.003) levels.push({ price: h.price, type: "resistance", date: h.date });
+      });
+      levels.sort(function (a, b) { return a.price - b.price; });
+    } else if (dir < 0) {
+      // Bearish: nearest swing low below current price
+      swings.lows.forEach(function (l) {
+        if (l.price < lastClose * 0.997) levels.push({ price: l.price, type: "support", date: l.date });
+      });
+      levels.sort(function (a, b) { return b.price - a.price; });
+    }
+    return levels.length ? levels[0] : null;
+  }
+
   function buildForecast(candles, patterns, ind, horizonDays, weekend) {
     var lastBar = candles[candles.length - 1];
     var lastClose = lastBar.close;
@@ -240,31 +312,49 @@
 
     // Horizon scaling on the score-implied move (√t diffusion).
     var horizonScale = Math.sqrt(horizonDays / 5);
-    var horizonPct = score * (2 * atrLast / lastClose) * horizonScale;
-    var horizonTarget = lastClose * (1 + horizonPct);
+    var driftPct = score * (2 * atrLast / lastClose) * horizonScale;
+    var driftTarget = lastClose * (1 + driftPct);
 
-    // σ-based diffusion bands. σ_daily comes from the last 60 daily
-    // log-ish returns. Day-i 80% interval ≈ ±1.28·σ·√i around the drift.
-    var sigma = ind.sigma || 0.012; // fallback 1.2% daily vol
-    var Z80 = 1.28;
+    // ── Anchor the displayed target to the next key S/R level when
+    //    one falls between current price and the drift extrapolation;
+    //    otherwise stay with drift. Real prices stop at S/R far more
+    //    often than they continue cleanly past it.
+    var dirSign = score > 0.18 ? 1 : score < -0.18 ? -1 : 0;
+    var keyLevel = dirSign !== 0 ? nextKeyLevel(candles, dirSign, lastClose) : null;
+    var horizonTarget = driftTarget;
+    var targetSource = "drift";
+    if (keyLevel) {
+      var nearer = dirSign > 0
+        ? (keyLevel.price < driftTarget && keyLevel.price > lastClose)
+        : (keyLevel.price > driftTarget && keyLevel.price < lastClose);
+      if (nearer) {
+        horizonTarget = keyLevel.price;
+        targetSource = keyLevel.type;
+      }
+    }
+    var horizonPct = (horizonTarget - lastClose) / lastClose;
+
+    // σ-based daily volatility from last 60 returns.
+    var sigma = ind.sigma || 0.012;
     var muDaily = horizonPct / horizonDays;
+
+    // Monte Carlo: probability of reaching horizonTarget and median
+    // first-hit day. Also gives proper percentile bands per day.
+    var mc = monteCarlo(lastClose, muDaily, sigma, horizonDays, horizonTarget, 4000);
 
     var dates = nextTradingDays(lastBar.date, horizonDays, weekend);
     var days = dates.map(function (date, i) {
       var t = i + 1;
-      var target = lastClose * (1 + muDaily * t);
-      var bandPct = Z80 * sigma * Math.sqrt(t);
-      var lower = target - lastClose * bandPct;
-      var upper = target + lastClose * bandPct;
-      var dir = target > lastClose * 1.001 ? "up"
-              : target < lastClose * 0.999 ? "down" : "flat";
-      // Per-day confidence decays with horizon and is gated by score
-      // strength + a humility cap.
+      var p50 = mc.p50ByDay[i];
+      var p10 = mc.p10ByDay[i];
+      var p90 = mc.p90ByDay[i];
+      var dir = p50 > lastClose * 1.001 ? "up"
+              : p50 < lastClose * 0.999 ? "down" : "flat";
       var conf = Math.max(0.10, Math.min(0.85, Math.abs(score) * 1.4 + 0.30)) *
                  Math.pow(0.94, i);
       return {
         date: date, dayIndex: t,
-        target: target, lower: lower, upper: upper,
+        target: p50, lower: p10, upper: p90,
         direction: dir, confidence: conf
       };
     });
@@ -272,11 +362,10 @@
     var direction = score > 0.18 ? "up" : score < -0.18 ? "down" : "flat";
     var label = direction === "up" ? "BULLISH" : direction === "down" ? "BEARISH" : "NEUTRAL";
 
-    // ── Confidence calibration ──
-    // 1) Base = |score| × agreement × vote-count factor × regime factor
-    var voteCountFactor = 1 - 1 / (votes.length + 1);     // more votes → more weight
-    var agreementFactor = 1 - Math.min(1, variance);      // tight directional vote = high
-    // High-vol regime → less confident: compare current ATR to recent median.
+    // Confidence calibration (unchanged): vote-agreement × count × regime,
+    // then blend with backtest hit rate.
+    var voteCountFactor = 1 - 1 / (votes.length + 1);
+    var agreementFactor = 1 - Math.min(1, variance);
     var atrMed = (function () {
       var vals = ind.atr.filter(function (v) { return v != null; }).slice(-60);
       vals.sort(function (a, b) { return a - b; });
@@ -288,12 +377,8 @@
     var rawConf = Math.abs(score) * 1.4 * voteCountFactor * agreementFactor * regimeFactor * horizonDecay
                   + 0.10 * agreementFactor;
 
-    // 2) Calibrate against backtest hit rate (weighted blend). Caps the
-    //    displayed confidence so an unproven model can't show 95%.
     var bt = backtest(candles, horizonDays);
-    var blended = bt.hitRate != null
-      ? rawConf * 0.55 + bt.hitRate * 0.45
-      : rawConf;
+    var blended = bt.hitRate != null ? rawConf * 0.55 + bt.hitRate * 0.45 : rawConf;
     var confidence = Math.max(0.05, Math.min(0.88, blended));
 
     var topVotes = votes.slice().sort(function (a, b) {
@@ -305,26 +390,45 @@
     }).join("   ·   ");
 
     var btTxt = bt.hitRate != null
-      ? "Walk-forward backtest on this series: " + Math.round(bt.hitRate * 100) +
-        "% direction hit-rate over " + bt.count + " " + horizonDays + "-session windows."
-      : "Insufficient history for a backtest at this horizon.";
+      ? " · Walk-forward backtest hit rate " + Math.round(bt.hitRate * 100) +
+        "% over " + bt.count + " " + horizonDays + "-session windows."
+      : "";
+
+    var anchorTxt = targetSource === "drift"
+      ? "Target uses drift extrapolation."
+      : "Target snapped to nearest swing " + targetSource + " (" + horizonTarget.toFixed(2) + ")";
+
+    var medianHit = mc.medianFirstHit;
+    var hitDate = medianHit != null ? dates[Math.min(medianHit - 1, dates.length - 1)] : null;
+    var hitTxt = medianHit != null
+      ? " · Probability of reaching target " + Math.round(mc.probHit * 100) +
+        "% — median first-hit on day " + medianHit + " (" + hitDate + ")."
+      : " · Probability of reaching target only " + Math.round(mc.probHit * 100) + "% within horizon.";
 
     var rationale =
       "Composite score " + score.toFixed(2) + " across " + votes.length + " factors over " +
-      horizonDays + " sessions (" + (horizonDays / 5) + "-week horizon). " +
-      "Targets use √t diffusion drift; per-day bands are ±1.28·σ·√t (≈80% interval) using σ=" +
-      (sigma * 100).toFixed(2) + "% daily. Confidence is calibrated against the in-sample " +
-      "backtest hit-rate. Drivers: " + bullets + ". " + btTxt;
+      horizonDays + " sessions. " + anchorTxt +
+      " Bands are Monte-Carlo P10/P90 (" + mc.paths + " GBM paths, σ=" +
+      (sigma * 100).toFixed(2) + "% daily)." + hitTxt + btTxt + " Drivers: " + bullets + ".";
 
-    var bandPctEnd = Z80 * sigma * Math.sqrt(horizonDays);
+    var bandPctEnd = 1.28 * sigma * Math.sqrt(horizonDays);
     var bandWidthEnd = lastClose * bandPctEnd;
     return {
       direction: direction, label: label, score: score, confidence: confidence,
       target: horizonTarget,
-      lower: horizonTarget - bandWidthEnd, upper: horizonTarget + bandWidthEnd,
+      lower: mc.p10ByDay[horizonDays - 1],
+      upper: mc.p90ByDay[horizonDays - 1],
       days: days, rationale: rationale, lastClose: lastClose,
       horizonDays: horizonDays,
-      backtest: bt
+      backtest: bt,
+      mc: mc,
+      targetSource: targetSource,
+      keyLevel: keyLevel,
+      driftTarget: driftTarget,
+      probHit: mc.probHit,
+      medianFirstHit: medianHit,
+      meanFirstHit: mc.meanFirstHit,
+      expectedDate: hitDate
     };
   }
 
@@ -399,13 +503,26 @@
     var patterns = Patterns.detectAll(data);
     var forecast = buildForecast(data, patterns, ind, horizonDays, weekend);
 
-    // ── Price chart with forecast trail ──
+    // ── Price chart with forecast trail + Monte-Carlo cone ──
     var fcLabels = forecast.days.map(function (d) { return d.date; });
     var fcSeries = forecast.days.map(function (d) { return d.target; });
+    var fcLower  = forecast.days.map(function (d) { return d.lower; });
+    var fcUpper  = forecast.days.map(function (d) { return d.upper; });
     var fullLabels = labels.concat(fcLabels);
     var pad = function (arr) { return arr.concat(fcLabels.map(function () { return null; })); };
-    var fcAligned = labels.map(function () { return null; }).concat(fcSeries);
-    fcAligned[labels.length - 1] = closes[closes.length - 1];
+    function alignForward(arr) {
+      var out = labels.map(function () { return null; }).concat(arr);
+      out[labels.length - 1] = closes[closes.length - 1];
+      return out;
+    }
+    var fcMid = alignForward(fcSeries);
+    var fcLo  = alignForward(fcLower);
+    var fcHi  = alignForward(fcUpper);
+
+    // Target horizontal line: highlights the snapped target across the
+    // forecast region only.
+    var targetLine = labels.map(function () { return null; })
+                            .concat(fcLabels.map(function () { return forecast.target; }));
 
     if (chartRefs.price) chartRefs.price.destroy();
     chartRefs.price = new Chart(document.getElementById("priceChart").getContext("2d"), {
@@ -413,11 +530,25 @@
       data: {
         labels: fullLabels,
         datasets: [
+          // Cone fill: P10 (lower bound) and P90 (upper bound). Drawn
+          // first so the price/SMA lines paint over it.
+          { label: "P90", data: fcHi, borderColor: "rgba(46,224,164,0.0)",
+            backgroundColor: "rgba(46,224,164,0.10)", pointRadius: 0, borderWidth: 0,
+            fill: "+1", tension: 0.2, order: 5 },
+          { label: "P10", data: fcLo, borderColor: "rgba(46,224,164,0.0)",
+            backgroundColor: "rgba(46,224,164,0.10)", pointRadius: 0, borderWidth: 0,
+            fill: false, tension: 0.2, order: 6 },
+
           { label: "Close", data: pad(closes), borderColor: "#6aa3ff", backgroundColor: "rgba(106,163,255,0.10)",
-            pointRadius: 0, borderWidth: 2, tension: 0.18, fill: true },
-          { label: "SMA 20", data: pad(sma20), borderColor: "#ffc960", pointRadius: 0, borderWidth: 1.4, tension: 0.2 },
-          { label: "SMA 50", data: pad(sma50), borderColor: "#b48cff", pointRadius: 0, borderWidth: 1.4, tension: 0.2 },
-          { label: "Forecast", data: fcAligned, borderColor: "#2ee0a4", borderDash: [6, 4], pointRadius: 3, pointBackgroundColor: "#2ee0a4", borderWidth: 2, tension: 0.1 }
+            pointRadius: 0, borderWidth: 2, tension: 0.18, fill: true, order: 2 },
+          { label: "SMA 20", data: pad(sma20), borderColor: "#ffc960", pointRadius: 0, borderWidth: 1.4, tension: 0.2, order: 3 },
+          { label: "SMA 50", data: pad(sma50), borderColor: "#b48cff", pointRadius: 0, borderWidth: 1.4, tension: 0.2, order: 4 },
+
+          { label: "Target", data: targetLine, borderColor: "rgba(46,224,164,0.55)",
+            borderDash: [2, 4], pointRadius: 0, borderWidth: 1, tension: 0, order: 1 },
+
+          { label: "Forecast (P50)", data: fcMid, borderColor: "#2ee0a4", borderDash: [6, 4],
+            pointRadius: 3, pointBackgroundColor: "#2ee0a4", borderWidth: 2, tension: 0.1, order: 0 }
         ]
       },
       options: chartBase({ y: { ticks: { color: "#a8b1cf" } } })
@@ -550,7 +681,42 @@
     badge.classList.add(f.direction);
 
     document.getElementById("targetPrice").textContent = fmtSAR(f.target) + " " + ccy;
-    document.getElementById("targetRange").textContent = fmtSAR(f.lower) + " – " + fmtSAR(f.upper) + " " + ccy;
+    var srcEl = document.getElementById("targetSourceLine");
+    if (srcEl) {
+      var srcTxt;
+      if (f.targetSource === "drift") srcTxt = "Drift extrapolation";
+      else if (f.targetSource === "resistance") srcTxt = "Snapped to swing resistance · drift " + fmtSAR(f.driftTarget);
+      else if (f.targetSource === "support") srcTxt = "Snapped to swing support · drift " + fmtSAR(f.driftTarget);
+      else srcTxt = "—";
+      srcEl.textContent = srcTxt;
+    }
+
+    var probEl = document.getElementById("probHit");
+    var probFill = document.getElementById("probFill");
+    if (probEl) {
+      var prob = Math.round((f.probHit || 0) * 100);
+      probEl.textContent = prob + "%";
+      if (probFill) probFill.style.width = prob + "%";
+    }
+
+    var expEl = document.getElementById("expectedTime");
+    var expDateEl = document.getElementById("expectedDate");
+    if (expEl && expDateEl) {
+      if (f.medianFirstHit != null) {
+        expEl.textContent = "Day " + f.medianFirstHit + " of " + f.horizonDays;
+        expDateEl.textContent = "≈ " + f.expectedDate +
+          (f.meanFirstHit ? " (mean " + f.meanFirstHit.toFixed(1) + "d)" : "");
+      } else {
+        expEl.textContent = "—";
+        expDateEl.textContent = "Probability too low for a meaningful estimate";
+      }
+    }
+
+    // Range pill now shows P10 / P50 / P90 from the Monte Carlo
+    var p50End = f.mc ? f.mc.p50ByDay[f.horizonDays - 1] : f.target;
+    document.getElementById("targetRange").textContent =
+      fmtSAR(f.lower) + " / " + fmtSAR(p50End) + " / " + fmtSAR(f.upper) + " " + ccy;
+
     document.getElementById("compositeScore").textContent =
       (f.score >= 0 ? "+" : "") + f.score.toFixed(2) + "  (" + (f.score * 100).toFixed(0) + "/100)";
 

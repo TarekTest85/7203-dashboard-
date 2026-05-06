@@ -304,6 +304,7 @@ main {
 .dot-sma20 { background: var(--sma20); }
 .dot-sma50 { background: var(--sma50); }
 .dot-fc { background: var(--fc); }
+.dot-cone { background: rgba(46, 224, 164, 0.4); }
 
 /* Charts: explicit container heights so canvases scale to width */
 .chart-wrap { position: relative; width: 100%; }
@@ -474,6 +475,25 @@ main {
   font-weight: 700;
   font-family: var(--font-mono);
   letter-spacing: -0.01em;
+}
+.sum-sub {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: 4px;
+  font-family: var(--font-mono);
+}
+.prob-bar {
+  margin-top: 8px;
+  height: 5px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.prob-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--green));
+  border-radius: 999px;
+  transition: width 0.4s ease;
 }
 
 /* Forecast head controls (segmented horizon picker + trend badge) */
