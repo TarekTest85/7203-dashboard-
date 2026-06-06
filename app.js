@@ -196,22 +196,23 @@
   // Walk-forward backtest. At each historical bar with enough indicator
   // warm-up, recompute votes using only data up to that bar (no look-
   // ahead), classify direction, and check against the actual horizon
-  // return. Returns hit-rate and mean abs %-error of the score-implied
-  // target. Used to calibrate displayed confidence.
+  // return. Returns hit-rate, MAPE, and an OLS slope β that maps score
+  // to actual horizon return — used to data-calibrate the drift target.
   function backtest(candles, horizonDays) {
     var WARMUP = 60;
     var hits = 0, total = 0, sumAbsErr = 0, errN = 0;
+    var sumSY = 0, sumSS = 0; // for β = Σ(score·actual)/Σ(score²)
     var deadband = 0.005; // ±0.5% considered "flat"
     for (var i = WARMUP; i < candles.length - horizonDays; i++) {
-      var window = candles.slice(0, i + 1);
-      var ind = computeIndicators(window);
-      var pats = window.Patterns ? [] : Patterns.detectAll(window);
-      var votes = buildVotes(window, pats, ind);
+      var slice = candles.slice(0, i + 1);
+      var ind = computeIndicators(slice);
+      var pats = Patterns.detectAll(slice);
+      var votes = buildVotes(slice, pats, ind);
       if (votes.length < 3) continue;
       var s = summariseScore(votes).score;
-      var atrLast = lastValid(ind.atr) || window[i].close * 0.015;
+      var atrLast = lastValid(ind.atr) || slice[i].close * 0.015;
       var horizonScale = Math.sqrt(horizonDays / 5);
-      var pct = s * (2 * atrLast / window[i].close) * horizonScale;
+      var pct = s * (2 * atrLast / slice[i].close) * horizonScale;
 
       var actual = (candles[i + horizonDays].close - candles[i].close) / candles[i].close;
       var predDir = s > 0.18 ? 1 : s < -0.18 ? -1 : 0;
@@ -220,11 +221,19 @@
       if (predDir === actDir) hits++;
       sumAbsErr += Math.abs(actual - pct);
       errN++;
+      // Skip near-zero scores from the regression — they don't inform β
+      // and would compress the slope estimate toward zero.
+      if (Math.abs(s) > 0.05) {
+        sumSY += s * actual;
+        sumSS += s * s;
+      }
     }
+    var beta = (sumSS > 0 && total >= 30) ? sumSY / sumSS : null;
     return {
       hitRate: total > 0 ? hits / total : null,
       count: total,
-      mape: errN > 0 ? sumAbsErr / errN : null
+      mape: errN > 0 ? sumAbsErr / errN : null,
+      beta: beta
     };
   }
 
@@ -278,26 +287,47 @@
     };
   }
 
-  // Detect the next swing-based support/resistance level the price would
-  // run into in `dir` direction. Helps anchor the projected target to a
-  // real S/R level when one is nearer than the pure drift extrapolation.
-  function nextKeyLevel(candles, dir, lastClose) {
-    var swings = Indicators.swings(candles, 5);
-    var levels = [];
-    if (dir > 0) {
-      // Bullish: nearest swing high above current price
-      swings.highs.forEach(function (h) {
-        if (h.price > lastClose * 1.003) levels.push({ price: h.price, type: "resistance", date: h.date });
-      });
-      levels.sort(function (a, b) { return a.price - b.price; });
-    } else if (dir < 0) {
-      // Bearish: nearest swing low below current price
-      swings.lows.forEach(function (l) {
-        if (l.price < lastClose * 0.997) levels.push({ price: l.price, type: "support", date: l.date });
-      });
-      levels.sort(function (a, b) { return b.price - a.price; });
+  // Detect the next meaningful swing-based level the price would run
+  // into in `dir` direction. Guardrails:
+  //   - level must be ≥ minDistATR × ATR away (rejects trivial pivots)
+  //   - swing must be within `recentWindow` sessions (rejects stale)
+  //   - returns BOTH nearest "in-direction" (target) and nearest
+  //     "against-direction" (invalidation/stop)
+  function findKeyLevels(candles, dir, lastClose, atr, opts) {
+    opts = opts || {};
+    var minDistATR = opts.minDistATR || 0.7;
+    var recentWindow = opts.recentWindow || 80;
+    var minDist = atr * minDistATR;
+    var earliestIdx = Math.max(0, candles.length - recentWindow);
+    var sw = Indicators.swings(candles, 5);
+
+    function pick(arr, predicate, sortFn) {
+      var picked = arr.filter(function (p) { return p.index >= earliestIdx && predicate(p); });
+      picked.sort(sortFn);
+      return picked.length ? picked[0] : null;
     }
-    return levels.length ? levels[0] : null;
+
+    var primary = null, invalidation = null;
+    if (dir > 0) {
+      primary = pick(sw.highs,
+        function (h) { return h.price - lastClose >= minDist; },
+        function (a, b) { return a.price - b.price; }); // nearest above
+      invalidation = pick(sw.lows,
+        function (l) { return lastClose - l.price >= minDist; },
+        function (a, b) { return b.price - a.price; }); // nearest below
+      if (primary) primary.type = "resistance";
+      if (invalidation) invalidation.type = "support";
+    } else if (dir < 0) {
+      primary = pick(sw.lows,
+        function (l) { return lastClose - l.price >= minDist; },
+        function (a, b) { return b.price - a.price; }); // nearest below
+      invalidation = pick(sw.highs,
+        function (h) { return h.price - lastClose >= minDist; },
+        function (a, b) { return a.price - b.price; }); // nearest above
+      if (primary) primary.type = "support";
+      if (invalidation) invalidation.type = "resistance";
+    }
+    return { primary: primary, invalidation: invalidation };
   }
 
   function buildForecast(candles, patterns, ind, horizonDays, weekend) {
@@ -310,37 +340,60 @@
     var score = s.score;
     var variance = s.variance;
 
-    // Horizon scaling on the score-implied move (√t diffusion).
-    var horizonScale = Math.sqrt(horizonDays / 5);
-    var driftPct = score * (2 * atrLast / lastClose) * horizonScale;
+    // ── Walk-forward backtest first so β can data-calibrate the drift.
+    var bt = backtest(candles, horizonDays);
+
+    // ── Drift target.
+    // Prefer the stock-specific OLS β fit by the backtest (drift = β·score).
+    // Fall back to the ATR-scaled prior when there isn't enough history.
+    var driftPct;
+    if (bt.beta != null) {
+      // Cap |β| to a sensible band so a noisy fit can't blow up the target.
+      var beta = Math.max(-0.20, Math.min(0.20, bt.beta));
+      driftPct = beta * score;
+    } else {
+      var horizonScale = Math.sqrt(horizonDays / 5);
+      driftPct = score * (2 * atrLast / lastClose) * horizonScale;
+    }
     var driftTarget = lastClose * (1 + driftPct);
 
-    // ── Anchor the displayed target to the next key S/R level when
-    //    one falls between current price and the drift extrapolation;
-    //    otherwise stay with drift. Real prices stop at S/R far more
-    //    often than they continue cleanly past it.
+    // ── Key level discovery with guardrails (recency + distance).
     var dirSign = score > 0.18 ? 1 : score < -0.18 ? -1 : 0;
-    var keyLevel = dirSign !== 0 ? nextKeyLevel(candles, dirSign, lastClose) : null;
+    var levels = dirSign !== 0
+      ? findKeyLevels(candles, dirSign, lastClose, atrLast, { minDistATR: 0.7, recentWindow: 80 })
+      : { primary: null, invalidation: null };
+
+    // Snap the displayed target to the primary level only when:
+    //   - it sits between current price and drift target (i.e. drift
+    //     extrapolation would carry the price *through* it)
+    //   - it is at least 0.7·ATR away (enforced inside findKeyLevels)
+    //   - direction is non-flat
     var horizonTarget = driftTarget;
     var targetSource = "drift";
-    if (keyLevel) {
-      var nearer = dirSign > 0
-        ? (keyLevel.price < driftTarget && keyLevel.price > lastClose)
-        : (keyLevel.price > driftTarget && keyLevel.price < lastClose);
-      if (nearer) {
-        horizonTarget = keyLevel.price;
-        targetSource = keyLevel.type;
+    if (levels.primary && dirSign !== 0) {
+      var lvl = levels.primary.price;
+      var between = dirSign > 0
+        ? (lvl < driftTarget && lvl > lastClose)
+        : (lvl > driftTarget && lvl < lastClose);
+      if (between) {
+        horizonTarget = lvl;
+        targetSource = levels.primary.type;
       }
     }
-    var horizonPct = (horizonTarget - lastClose) / lastClose;
 
-    // σ-based daily volatility from last 60 returns.
+    // ── Monte Carlo.
+    // IMPORTANT: muDaily is the score-implied daily drift, NOT the rate
+    // needed to mechanically reach the (possibly snapped) target. This
+    // keeps "probability of reaching target" from becoming circular.
     var sigma = ind.sigma || 0.012;
-    var muDaily = horizonPct / horizonDays;
-
-    // Monte Carlo: probability of reaching horizonTarget and median
-    // first-hit day. Also gives proper percentile bands per day.
+    var muDaily = driftPct / horizonDays;
     var mc = monteCarlo(lastClose, muDaily, sigma, horizonDays, horizonTarget, 4000);
+
+    // ── Touch probability for the invalidation/stop level.
+    var stopMC = null;
+    if (levels.invalidation) {
+      stopMC = monteCarlo(lastClose, muDaily, sigma, horizonDays, levels.invalidation.price, 2000);
+    }
 
     var dates = nextTradingDays(lastBar.date, horizonDays, weekend);
     var days = dates.map(function (date, i) {
@@ -362,8 +415,7 @@
     var direction = score > 0.18 ? "up" : score < -0.18 ? "down" : "flat";
     var label = direction === "up" ? "BULLISH" : direction === "down" ? "BEARISH" : "NEUTRAL";
 
-    // Confidence calibration (unchanged): vote-agreement × count × regime,
-    // then blend with backtest hit rate.
+    // ── Confidence calibration (unchanged formula, β-decoupled).
     var voteCountFactor = 1 - 1 / (votes.length + 1);
     var agreementFactor = 1 - Math.min(1, variance);
     var atrMed = (function () {
@@ -376,8 +428,6 @@
 
     var rawConf = Math.abs(score) * 1.4 * voteCountFactor * agreementFactor * regimeFactor * horizonDecay
                   + 0.10 * agreementFactor;
-
-    var bt = backtest(candles, horizonDays);
     var blended = bt.hitRate != null ? rawConf * 0.55 + bt.hitRate * 0.45 : rawConf;
     var confidence = Math.max(0.05, Math.min(0.88, blended));
 
@@ -390,29 +440,36 @@
     }).join("   ·   ");
 
     var btTxt = bt.hitRate != null
-      ? " · Walk-forward backtest hit rate " + Math.round(bt.hitRate * 100) +
-        "% over " + bt.count + " " + horizonDays + "-session windows."
+      ? " · Walk-forward backtest: " + Math.round(bt.hitRate * 100) +
+        "% direction hit rate over " + bt.count + " windows" +
+        (bt.beta != null ? "; OLS β=" + bt.beta.toFixed(3) + " calibrated drift" : "") + "."
       : "";
 
     var anchorTxt = targetSource === "drift"
-      ? "Target uses drift extrapolation."
-      : "Target snapped to nearest swing " + targetSource + " (" + horizonTarget.toFixed(2) + ")";
+      ? "Target = drift extrapolation (" + driftTarget.toFixed(2) + ")."
+      : "Target snapped to nearest swing " + targetSource + " at " +
+        horizonTarget.toFixed(2) + " (drift would have reached " + driftTarget.toFixed(2) + ").";
 
     var medianHit = mc.medianFirstHit;
     var hitDate = medianHit != null ? dates[Math.min(medianHit - 1, dates.length - 1)] : null;
     var hitTxt = medianHit != null
-      ? " · Probability of reaching target " + Math.round(mc.probHit * 100) +
-        "% — median first-hit on day " + medianHit + " (" + hitDate + ")."
-      : " · Probability of reaching target only " + Math.round(mc.probHit * 100) + "% within horizon.";
+      ? " · " + Math.round(mc.probHit * 100) + "% of paths touch target; median first-hit on day " +
+        medianHit + " (" + hitDate + "), conditional on hitting."
+      : " · Only " + Math.round(mc.probHit * 100) + "% of paths touch target within horizon — timing suppressed.";
+
+    var stopTxt = "";
+    if (stopMC && levels.invalidation) {
+      stopTxt = " · Invalidation level " + levels.invalidation.price.toFixed(2) +
+        " (" + levels.invalidation.type + "); " +
+        Math.round(stopMC.probHit * 100) + "% of paths touch it.";
+    }
 
     var rationale =
       "Composite score " + score.toFixed(2) + " across " + votes.length + " factors over " +
       horizonDays + " sessions. " + anchorTxt +
       " Bands are Monte-Carlo P10/P90 (" + mc.paths + " GBM paths, σ=" +
-      (sigma * 100).toFixed(2) + "% daily)." + hitTxt + btTxt + " Drivers: " + bullets + ".";
-
-    var bandPctEnd = 1.28 * sigma * Math.sqrt(horizonDays);
-    var bandWidthEnd = lastClose * bandPctEnd;
+      (sigma * 100).toFixed(2) + "% daily, drift β·score=" + (driftPct * 100).toFixed(2) +
+      "% over horizon)." + hitTxt + stopTxt + btTxt + " Drivers: " + bullets + ".";
     return {
       direction: direction, label: label, score: score, confidence: confidence,
       target: horizonTarget,
@@ -423,8 +480,11 @@
       backtest: bt,
       mc: mc,
       targetSource: targetSource,
-      keyLevel: keyLevel,
+      keyLevel: levels.primary,
+      invalidation: levels.invalidation,
+      stopMC: stopMC,
       driftTarget: driftTarget,
+      driftPct: driftPct,
       probHit: mc.probHit,
       medianFirstHit: medianHit,
       meanFirstHit: mc.meanFirstHit,
@@ -705,10 +765,26 @@
       if (f.medianFirstHit != null) {
         expEl.textContent = "Day " + f.medianFirstHit + " of " + f.horizonDays;
         expDateEl.textContent = "≈ " + f.expectedDate +
-          (f.meanFirstHit ? " (mean " + f.meanFirstHit.toFixed(1) + "d)" : "");
+          (f.meanFirstHit ? "  ·  mean " + f.meanFirstHit.toFixed(1) + "d" : "") +
+          "  ·  conditional on hit";
       } else {
         expEl.textContent = "—";
-        expDateEl.textContent = "Probability too low for a meaningful estimate";
+        expDateEl.textContent = "<30% of paths reach target — timing not meaningful";
+      }
+    }
+
+    var stopValEl = document.getElementById("stopLevel");
+    var stopSubEl = document.getElementById("stopRisk");
+    if (stopValEl && stopSubEl) {
+      if (f.invalidation && f.stopMC) {
+        var risk = Math.round(f.stopMC.probHit * 100);
+        var dist = ((f.invalidation.price - f.lastClose) / f.lastClose) * 100;
+        stopValEl.textContent = fmtSAR(f.invalidation.price) + " " + ccy;
+        stopSubEl.textContent = f.invalidation.type + "  ·  " + (dist >= 0 ? "+" : "") +
+          dist.toFixed(2) + "%  ·  touch risk " + risk + "%";
+      } else {
+        stopValEl.textContent = "—";
+        stopSubEl.textContent = "no nearby swing in opposite direction";
       }
     }
 

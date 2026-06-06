@@ -495,6 +495,8 @@ main {
   border-radius: 999px;
   transition: width 0.4s ease;
 }
+.sum-stat-risk { border: 1px solid rgba(255, 97, 120, 0.25); background: rgba(255, 97, 120, 0.05); }
+.sum-stat-risk .sum-value { color: var(--red); }
 
 /* Forecast head controls (segmented horizon picker + trend badge) */
 .forecast-head-controls { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
