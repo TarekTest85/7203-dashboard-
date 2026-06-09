@@ -593,7 +593,7 @@ main {
 .day-conf-num { font-family: var(--font-mono); font-weight: 600; min-width: 32px; text-align: right; }
 
 .rationale {
-  margin: 0;
+  margin: 14px 0 0;
   padding: 14px 16px;
   background: rgba(255, 255, 255, 0.02);
   border: 1px solid var(--line);
@@ -602,6 +602,43 @@ main {
   line-height: 1.6;
   color: var(--text-2);
 }
+
+.contributions {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255,255,255,0.02);
+  padding: 14px 16px;
+}
+.contributions-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 8px;
+}
+.contributions h3 {
+  margin: 0; font-size: 13px; font-weight: 600;
+  color: var(--text); letter-spacing: 0.04em; text-transform: uppercase;
+}
+.contrib-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 12.5px;
+}
+.contrib-table th {
+  text-align: left; font-weight: 600; color: var(--muted);
+  padding: 6px 8px; border-bottom: 1px solid var(--line);
+  text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.5px;
+}
+.contrib-table td {
+  padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.04);
+  color: var(--text-2);
+}
+.contrib-table tr:last-child td { border-bottom: none; }
+.contrib-table .num { text-align: right; font-family: var(--font-mono); }
+.contrib-table td.num { color: var(--text); }
+.contrib-table .contrib-pos { color: var(--green); font-weight: 600; }
+.contrib-table .contrib-neg { color: var(--red); font-weight: 600; }
+.contrib-table .contrib-zero { color: var(--muted); }
+.contrib-table .contrib-shrunk { color: var(--muted); font-style: italic; }
+.contrib-table .contrib-name { color: var(--text); font-weight: 500; }
 
 /* ───────────────────────────  History  ─────────────────────────── */
 .history-actions { display: flex; gap: 8px; }

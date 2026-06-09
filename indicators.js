@@ -237,10 +237,75 @@
     return Math.sqrt(sq / Math.max(1, values.length - 1));
   }
 
+  // Rolling-window h-day forward returns. returns[i] = (close[i+h]/close[i]) - 1.
+  // Skips the last h entries (no forward return available).
+  function horizonReturns(closes, h) {
+    var out = [];
+    for (var i = 0; i + h < closes.length; i++) {
+      out.push((closes[i + h] - closes[i]) / closes[i]);
+    }
+    return out;
+  }
+
+  // Empirical percentile (linear interpolation). q in [0, 1].
+  function percentile(values, q) {
+    if (!values.length) return 0;
+    var s = values.slice().sort(function (a, b) { return a - b; });
+    var pos = q * (s.length - 1);
+    var lo = Math.floor(pos), hi = Math.ceil(pos), frac = pos - lo;
+    return s[lo] + (s[hi] - s[lo]) * frac;
+  }
+
+  // Pearson correlation between two equal-length series.
+  function correlation(x, y) {
+    var n = Math.min(x.length, y.length);
+    if (n < 2) return 0;
+    var mx = 0, my = 0;
+    for (var i = 0; i < n; i++) { mx += x[i]; my += y[i]; }
+    mx /= n; my /= n;
+    var sxy = 0, sxx = 0, syy = 0;
+    for (var j = 0; j < n; j++) {
+      var dx = x[j] - mx, dy = y[j] - my;
+      sxy += dx * dy; sxx += dx * dx; syy += dy * dy;
+    }
+    var den = Math.sqrt(sxx * syy);
+    return den === 0 ? 0 : sxy / den;
+  }
+
+  // OLS slope of y on x (no intercept needed if both centred — we keep
+  // intercept implicit by returning β = cov(x,y)/var(x)).
+  function olsSlope(x, y) {
+    var n = Math.min(x.length, y.length);
+    if (n < 2) return { beta: null, t: null, r2: null };
+    var mx = 0, my = 0;
+    for (var i = 0; i < n; i++) { mx += x[i]; my += y[i]; }
+    mx /= n; my /= n;
+    var sxx = 0, sxy = 0, syy = 0;
+    for (var j = 0; j < n; j++) {
+      var dx = x[j] - mx, dy = y[j] - my;
+      sxx += dx * dx; sxy += dx * dy; syy += dy * dy;
+    }
+    if (sxx === 0) return { beta: null, t: null, r2: null };
+    var beta = sxy / sxx;
+    var alpha = my - beta * mx;
+    var sse = 0;
+    for (var k = 0; k < n; k++) {
+      var resid = y[k] - (alpha + beta * x[k]);
+      sse += resid * resid;
+    }
+    var sigma2 = sse / Math.max(1, n - 2);
+    var seBeta = Math.sqrt(sigma2 / sxx);
+    var t = seBeta === 0 ? 0 : beta / seBeta;
+    var r2 = syy === 0 ? 0 : 1 - sse / syy;
+    return { beta: beta, t: t, r2: r2, n: n };
+  }
+
   window.Indicators = {
     sma: sma, ema: ema, rsi: rsi, macd: macd, atr: atr,
     bollinger: bollinger, adx: adx, roc: roc, stochastic: stochastic,
     dailyReturns: dailyReturns, stdev: stdev, rollingStdev: rollingStdev,
+    horizonReturns: horizonReturns, percentile: percentile,
+    correlation: correlation, olsSlope: olsSlope,
     swings: swings
   };
 })();

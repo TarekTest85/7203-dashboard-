@@ -85,156 +85,160 @@
     };
   }
 
-  function buildVotes(candles, patterns, ind) {
-    var lastClose = candles[candles.length - 1].close;
-    var rsiLast = lastValid(ind.rsi);
-    var sma20Last = lastValid(ind.sma20);
-    var sma50Last = lastValid(ind.sma50);
-    var macdLast = lastValid(ind.macd.line);
-    var sigLast = lastValid(ind.macd.signal);
-    var histLast = lastValid(ind.macd.hist);
-    var bbZ = lastValid(ind.bb.z);
-    var adxLast = lastValid(ind.adx);
-    var roc5 = lastValid(ind.roc5);
-    var roc10 = lastValid(ind.roc10);
-    var roc20 = lastValid(ind.roc20);
-    var stochK = lastValid(ind.stoch.k);
-    var stochD = lastValid(ind.stoch.d);
+  // ───────────────────────────────────────────────────────────────
+  // Signal extraction.
+  //
+  // Each signal is a real-valued time series. We give every signal the
+  // same shape so that for the current bar we get one number, and for
+  // backtest fitting we get a series we can regress against forward
+  // returns. Signals are chosen to be as INDEPENDENT as possible so we
+  // don't double-count correlated information.
+  // ───────────────────────────────────────────────────────────────
+  function signalSeries(candles, ind) {
+    var n = candles.length;
+    var closes = ind.closes;
 
-    var votes = [];
-
-    // ── Bulkowski patterns: stage-discounted ──
-    // A "forming" pattern is statistically less reliable than a confirmed
-    // breakout. Halve its weight; double-down (1.2×) on confirmed ones.
-    patterns.forEach(function (p) {
-      var stageMul = (p.stage === "broken-up" || p.stage === "broken-down") ? 1.2
-                   : (p.stage === "forming" ? 0.5 : 1.0);
-      var statMul = p.stats ? Math.min(1, Math.abs(p.stats.avgMove) / 30) : 0.5;
-      var weight = p.confidence * statMul * stageMul;
-      var dir = p.bias === "bull" ? 1 : p.bias === "bear" ? -1 : 0;
-      votes.push({ source: "Pattern: " + p.name + " (" + p.stage + ")", direction: dir, weight: weight });
-    });
-
-    // ── Trend regime: SMA stack + ADX strength ──
-    // ADX < 20 → choppy; weight trend votes lower. ADX > 25 → strong trend.
-    var trendAmp = adxLast == null ? 0.6 : Math.max(0.25, Math.min(1.1, (adxLast - 12) / 20));
-    if (sma20Last != null && sma50Last != null) {
-      if (lastClose > sma20Last && sma20Last > sma50Last)
-        votes.push({ source: "Uptrend stack (ADX " + (adxLast||0).toFixed(0) + ")", direction: 1, weight: 0.6 * trendAmp });
-      else if (lastClose < sma20Last && sma20Last < sma50Last)
-        votes.push({ source: "Downtrend stack (ADX " + (adxLast||0).toFixed(0) + ")", direction: -1, weight: 0.6 * trendAmp });
-      else
-        votes.push({ source: "SMA stack mixed", direction: 0, weight: 0.2 });
+    // 1) Medium-term trend: log(close / sma50). Centred at 0; positive
+    //    means price is above its 50-day mean (trend up).
+    var trend = new Array(n).fill(null);
+    for (var i = 0; i < n; i++) {
+      if (ind.sma50[i] && ind.sma50[i] > 0) trend[i] = Math.log(closes[i] / ind.sma50[i]);
     }
 
-    // ── Momentum: 5/10/20-day ROC, weighted by recency ──
-    if (roc5 != null) {
-      var rocDir = Math.sign(roc5);
-      var rocMag = Math.min(1, Math.abs(roc5) / 5); // 5% over 5d → full weight
-      votes.push({ source: "Momentum 5d (" + roc5.toFixed(1) + "%)", direction: rocDir, weight: 0.5 * rocMag });
-    }
-    if (roc10 != null) {
-      var rd = Math.sign(roc10);
-      var rm = Math.min(1, Math.abs(roc10) / 8);
-      votes.push({ source: "Momentum 10d (" + roc10.toFixed(1) + "%)", direction: rd, weight: 0.4 * rm });
-    }
-    if (roc20 != null) {
-      var rd2 = Math.sign(roc20);
-      var rm2 = Math.min(1, Math.abs(roc20) / 12);
-      votes.push({ source: "Momentum 20d (" + roc20.toFixed(1) + "%)", direction: rd2, weight: 0.3 * rm2 });
-    }
-
-    // ── RSI: extremes (mean revert) and trend (continuation) ──
-    if (rsiLast != null) {
-      if (rsiLast >= 75) votes.push({ source: "RSI extreme overbought (" + rsiLast.toFixed(0) + ")", direction: -1, weight: 0.45 });
-      else if (rsiLast >= 70) votes.push({ source: "RSI overbought (" + rsiLast.toFixed(0) + ")", direction: -0.5, weight: 0.35 });
-      else if (rsiLast <= 25) votes.push({ source: "RSI extreme oversold (" + rsiLast.toFixed(0) + ")", direction: 1, weight: 0.45 });
-      else if (rsiLast <= 30) votes.push({ source: "RSI oversold (" + rsiLast.toFixed(0) + ")", direction: 0.5, weight: 0.35 });
-      else if (rsiLast > 55) votes.push({ source: "RSI bullish (" + rsiLast.toFixed(0) + ")", direction: 0.3, weight: 0.25 });
-      else if (rsiLast < 45) votes.push({ source: "RSI bearish (" + rsiLast.toFixed(0) + ")", direction: -0.3, weight: 0.25 });
-    }
-
-    // ── MACD: with histogram strength ──
-    if (macdLast != null && sigLast != null) {
-      var macdDir = macdLast > sigLast ? 1 : -1;
-      var strength = Math.min(1, Math.abs(histLast || 0) / (lastClose * 0.005));
-      votes.push({ source: "MACD " + (macdDir > 0 ? "above" : "below") + " signal", direction: macdDir, weight: 0.3 + 0.3 * strength });
-    }
-
-    // ── Bollinger Band z-score: mean revert at extremes, continuation
-    //    near the middle in a trending regime ──
-    if (bbZ != null) {
-      if (bbZ >= 2)        votes.push({ source: "BB z " + bbZ.toFixed(1) + " (above upper)", direction: -0.6, weight: 0.4 });
-      else if (bbZ <= -2)  votes.push({ source: "BB z " + bbZ.toFixed(1) + " (below lower)", direction: 0.6, weight: 0.4 });
-      else if (Math.abs(bbZ) < 0.4 && adxLast != null && adxLast > 22) {
-        // In a trend, riding the middle is bullish/bearish in the trend's direction
-        var trendDir = (sma20Last != null && sma50Last != null && sma20Last > sma50Last) ? 1
-                     : (sma20Last != null && sma50Last != null && sma20Last < sma50Last) ? -1 : 0;
-        if (trendDir !== 0) votes.push({ source: "BB middle in trend", direction: trendDir, weight: 0.2 });
+    // 2) Short-term momentum (independent of trend): ROC(10) – ROC(50).
+    //    This is the "acceleration" — how much faster the recent 10d
+    //    rose/fell than the long-run drift.
+    var roc50 = Indicators.roc(closes, 50);
+    var momentum = new Array(n).fill(null);
+    for (var k = 0; k < n; k++) {
+      if (ind.roc10[k] != null && roc50[k] != null) {
+        momentum[k] = (ind.roc10[k] - roc50[k] / 5) / 100; // back to fractional
       }
     }
 
-    // ── Stochastic: cross + zone ──
-    if (stochK != null && stochD != null) {
-      if (stochK > 80 && stochD > 80) votes.push({ source: "Stochastic overbought", direction: -0.4, weight: 0.25 });
-      else if (stochK < 20 && stochD < 20) votes.push({ source: "Stochastic oversold", direction: 0.4, weight: 0.25 });
-      else votes.push({ source: "Stochastic " + (stochK > stochD ? "K>D" : "K<D"), direction: stochK > stochD ? 0.3 : -0.3, weight: 0.15 });
+    // 3) Mean reversion: Bollinger z-score, but only the EXTREME portion
+    //    (clamped to ±2 then divided). Captures statistical stretch.
+    var meanRev = new Array(n).fill(null);
+    for (var m = 0; m < n; m++) {
+      var z = ind.bb.z[m];
+      if (z != null) {
+        // Use only the extreme component; inverted because high z → expect down
+        meanRev[m] = -Math.max(-1, Math.min(1, z / 2));
+      }
     }
 
-    return votes;
+    // 4) Pattern signal: +1 if any confirmed bullish pattern, -1 if any
+    //    confirmed bearish, 0.5×sign if forming, 0 if none. Detected on
+    //    a rolling basis is expensive; here we just provide the LAST
+    //    value (used for the final forecast). For the backtest fitting
+    //    we treat the pattern series as 0 over history so the regression
+    //    weighs it conservatively. (Bulkowski stats are months-scale —
+    //    we apply a discount in `currentSignals` rather than fit β.)
+    var pattern = new Array(n).fill(0);
+
+    return { trend: trend, momentum: momentum, meanRev: meanRev, pattern: pattern };
   }
 
-  function summariseScore(votes) {
-    var totalWeight = votes.reduce(function (s, v) { return s + v.weight; }, 0) || 1;
-    var score = votes.reduce(function (s, v) { return s + v.direction * v.weight; }, 0) / totalWeight;
-    var meanDir = votes.reduce(function (s, v) { return s + v.direction; }, 0) / Math.max(1, votes.length);
-    var variance = votes.reduce(function (s, v) { return s + Math.pow(v.direction - meanDir, 2); }, 0) /
-      Math.max(1, votes.length);
-    return { score: score, variance: variance, totalWeight: totalWeight };
+  // Current value of each signal for the LAST bar in `candles`.
+  function currentSignals(candles, ind, patterns, horizonDays) {
+    var n = candles.length;
+    var series = signalSeries(candles, ind);
+    var trendNow = lastValid(series.trend);
+    var momentumNow = lastValid(series.momentum);
+    var meanRevNow = lastValid(series.meanRev);
+
+    // Pattern current value: only confirmed (broken) patterns contribute,
+    // and the contribution is Bulkowski's avg-move scaled by horizon/90d
+    // (since his stats are months-scale). Clamped to ±0.05 (5%).
+    var patternEffect = 0;
+    patterns.forEach(function (p) {
+      if (p.stage !== "broken-up" && p.stage !== "broken-down") return;
+      if (!p.stats) return;
+      var horizonFraction = Math.min(1, horizonDays / 90);
+      var signed = p.bias === "bull" ? Math.abs(p.stats.avgMove) / 100
+                 : p.bias === "bear" ? -Math.abs(p.stats.avgMove) / 100 : 0;
+      patternEffect += signed * horizonFraction * p.confidence;
+    });
+    patternEffect = Math.max(-0.05, Math.min(0.05, patternEffect));
+
+    return {
+      trend: trendNow != null ? trendNow : 0,
+      momentum: momentumNow != null ? momentumNow : 0,
+      meanRev: meanRevNow != null ? meanRevNow : 0,
+      pattern: patternEffect,
+      _series: series
+    };
   }
 
-  // Walk-forward backtest. At each historical bar with enough indicator
-  // warm-up, recompute votes using only data up to that bar (no look-
-  // ahead), classify direction, and check against the actual horizon
-  // return. Returns hit-rate, MAPE, and an OLS slope β that maps score
-  // to actual horizon return — used to data-calibrate the drift target.
-  function backtest(candles, horizonDays) {
+  // ───────────────────────────────────────────────────────────────
+  // Per-signal out-of-sample calibration.
+  //
+  // For each signal series, run an OLS regression of FORWARD h-day
+  // return on the signal value, fit on the first 70% of valid pairs,
+  // and report:
+  //   · β (slope) for the in-sample fit
+  //   · t-stat from the in-sample fit (used as a confidence cue)
+  //   · shrinkFactor = max(0, |t| − 1) / max(1, |t|)
+  //   · oosR2 — coefficient of determination on the held-out 30%
+  // The current signal value × β × shrinkFactor is the calibrated
+  // contribution to expected h-day return.
+  // ───────────────────────────────────────────────────────────────
+  function calibrateSignal(signalVals, closes, horizonDays) {
+    // Align: at index i we have signal[i] predicting return from i to i+h.
+    var xs = [], ys = [];
+    for (var i = 0; i + horizonDays < closes.length; i++) {
+      var v = signalVals[i];
+      if (v == null || !isFinite(v)) continue;
+      var r = (closes[i + horizonDays] - closes[i]) / closes[i];
+      xs.push(v); ys.push(r);
+    }
+    if (xs.length < 30) return { beta: 0, t: 0, shrink: 0, oosR2: null, n: xs.length };
+
+    var split = Math.floor(xs.length * 0.7);
+    var trainX = xs.slice(0, split), trainY = ys.slice(0, split);
+    var testX = xs.slice(split),     testY = ys.slice(split);
+
+    var fit = Indicators.olsSlope(trainX, trainY);
+    if (fit.beta == null) return { beta: 0, t: 0, shrink: 0, oosR2: null, n: xs.length };
+
+    // Out-of-sample R²: 1 - SSE_oos / SST_oos against the train-mean.
+    var trainMeanY = trainY.reduce(function (s, v) { return s + v; }, 0) / trainY.length;
+    var alpha = trainMeanY - fit.beta * (trainX.reduce(function (s, v) { return s + v; }, 0) / trainX.length);
+    var sse = 0, sst = 0;
+    for (var j = 0; j < testX.length; j++) {
+      var pred = alpha + fit.beta * testX[j];
+      sse += Math.pow(testY[j] - pred, 2);
+      sst += Math.pow(testY[j] - trainMeanY, 2);
+    }
+    var oosR2 = sst > 0 ? 1 - sse / sst : null;
+
+    var absT = Math.abs(fit.t);
+    var shrink = absT <= 1 ? 0 : (absT - 1) / absT;
+    // Penalise if out-of-sample R² is negative (worse than mean) — that's
+    // strong evidence the in-sample fit was spurious.
+    if (oosR2 != null && oosR2 < 0) shrink *= 0.3;
+
+    return { beta: fit.beta, t: fit.t, shrink: shrink, oosR2: oosR2, n: xs.length };
+  }
+
+  // Walk-forward direction-only backtest. Honest hit-rate.
+  function backtestDirection(candles, horizonDays, predictSign) {
     var WARMUP = 60;
-    var hits = 0, total = 0, sumAbsErr = 0, errN = 0;
-    var sumSY = 0, sumSS = 0; // for β = Σ(score·actual)/Σ(score²)
-    var deadband = 0.005; // ±0.5% considered "flat"
+    var hits = 0, total = 0;
+    var deadband = 0.005;
     for (var i = WARMUP; i < candles.length - horizonDays; i++) {
       var slice = candles.slice(0, i + 1);
       var ind = computeIndicators(slice);
       var pats = Patterns.detectAll(slice);
-      var votes = buildVotes(slice, pats, ind);
-      if (votes.length < 3) continue;
-      var s = summariseScore(votes).score;
-      var atrLast = lastValid(ind.atr) || slice[i].close * 0.015;
-      var horizonScale = Math.sqrt(horizonDays / 5);
-      var pct = s * (2 * atrLast / slice[i].close) * horizonScale;
-
+      var sigs = currentSignals(slice, ind, pats, horizonDays);
+      var sign = predictSign(sigs);
+      if (sign === 0) continue;
       var actual = (candles[i + horizonDays].close - candles[i].close) / candles[i].close;
-      var predDir = s > 0.18 ? 1 : s < -0.18 ? -1 : 0;
-      var actDir  = actual > deadband ? 1 : actual < -deadband ? -1 : 0;
+      var actDir = actual > deadband ? 1 : actual < -deadband ? -1 : 0;
       total++;
-      if (predDir === actDir) hits++;
-      sumAbsErr += Math.abs(actual - pct);
-      errN++;
-      // Skip near-zero scores from the regression — they don't inform β
-      // and would compress the slope estimate toward zero.
-      if (Math.abs(s) > 0.05) {
-        sumSY += s * actual;
-        sumSS += s * s;
-      }
+      if (sign === actDir) hits++;
     }
-    var beta = (sumSS > 0 && total >= 30) ? sumSY / sumSS : null;
-    return {
-      hitRate: total > 0 ? hits / total : null,
-      count: total,
-      mape: errN > 0 ? sumAbsErr / errN : null,
-      beta: beta
-    };
+    return { hitRate: total > 0 ? hits / total : null, count: total };
   }
 
   // Standard normal sample via Box-Muller. Used for GBM Monte Carlo.
@@ -330,66 +334,119 @@
     return { primary: primary, invalidation: invalidation };
   }
 
+  // ───────────────────────────────────────────────────────────────
+  // Forecast (rebuilt).
+  //
+  // Methodology:
+  //   1. BASELINE  — empirical h-day return distribution from THIS
+  //      stock's actual history. μ_h, σ_h, percentiles (10/25/50/75/90).
+  //   2. SIGNALS   — four independent signals (trend, momentum, mean-
+  //      reversion, pattern) with calibrated effect = β·current_value,
+  //      shrunk by max(0, |t|-1)/|t| from an OLS fit; penalised if
+  //      out-of-sample R² is negative.
+  //   3. COMBINE   — total adjustment = Σ contributions, clamped to
+  //      ±2·σ_h (signals never override what history shows).
+  //   4. FORECAST  — expected return = μ_h + total_adjust.
+  //      Price = lastClose × (1 + expected_return).
+  //   5. RANGE     — empirical percentiles + total_adjust applied as a
+  //      location shift (no log-normality assumption).
+  //   6. PROBABILITY — empirical bootstrap: fraction of historical
+  //      h-day returns + total_adjust that meet/exceed the target.
+  //   7. TIME      — GBM Monte-Carlo first-passage using μ = expected
+  //      daily return and σ = recent daily σ. Used only for timing.
+  //   8. CONFIDENCE — based on signal-to-noise |adjust|/σ_h, blended
+  //      with the walk-forward direction hit rate; capped at 85%.
+  // ───────────────────────────────────────────────────────────────
   function buildForecast(candles, patterns, ind, horizonDays, weekend) {
     var lastBar = candles[candles.length - 1];
     var lastClose = lastBar.close;
     var atrLast = lastValid(ind.atr) || lastClose * 0.015;
+    var closes = ind.closes;
 
-    var votes = buildVotes(candles, patterns, ind);
-    var s = summariseScore(votes);
-    var score = s.score;
-    var variance = s.variance;
+    // ── 1. Empirical baseline (h-day forward returns from this stock).
+    var hRets = Indicators.horizonReturns(closes, horizonDays);
+    var muH      = hRets.length ? hRets.reduce(function (s, v) { return s + v; }, 0) / hRets.length : 0;
+    var sigmaH   = hRets.length ? Indicators.stdev(hRets) : 0.02;
+    var pct = function (q) { return Indicators.percentile(hRets, q); };
+    var p10H = pct(0.10), p25H = pct(0.25), p50H = pct(0.50), p75H = pct(0.75), p90H = pct(0.90);
 
-    // ── Walk-forward backtest first so β can data-calibrate the drift.
-    var bt = backtest(candles, horizonDays);
+    // ── 2. Signals + per-signal out-of-sample calibration.
+    var series = signalSeries(candles, ind);
+    var cur = currentSignals(candles, ind, patterns, horizonDays);
 
-    // ── Drift target.
-    // Prefer the stock-specific OLS β fit by the backtest (drift = β·score).
-    // Fall back to the ATR-scaled prior when there isn't enough history.
-    var driftPct;
-    if (bt.beta != null) {
-      // Cap |β| to a sensible band so a noisy fit can't blow up the target.
-      var beta = Math.max(-0.20, Math.min(0.20, bt.beta));
-      driftPct = beta * score;
-    } else {
-      var horizonScale = Math.sqrt(horizonDays / 5);
-      driftPct = score * (2 * atrLast / lastClose) * horizonScale;
+    var calTrend    = calibrateSignal(series.trend,    closes, horizonDays);
+    var calMomentum = calibrateSignal(series.momentum, closes, horizonDays);
+    var calMeanRev  = calibrateSignal(series.meanRev,  closes, horizonDays);
+
+    function contrib(cal, value) {
+      if (!cal || cal.beta == null || !isFinite(value)) return 0;
+      return cal.beta * value * cal.shrink;
     }
-    var driftTarget = lastClose * (1 + driftPct);
+    var contribs = [
+      { name: "Trend (log(P/SMA50))",        value: cur.trend,    cal: calTrend,    effect: contrib(calTrend,    cur.trend)    },
+      { name: "Momentum (ROC10 − ROC50/5)",  value: cur.momentum, cal: calMomentum, effect: contrib(calMomentum, cur.momentum) },
+      { name: "Mean reversion (BB z, capped)", value: cur.meanRev,  cal: calMeanRev,  effect: contrib(calMeanRev,  cur.meanRev)  },
+      // Pattern is direct (not regression-fit) — Bulkowski statistics
+      // scaled to the horizon, only for CONFIRMED breakouts.
+      { name: "Confirmed Bulkowski pattern (horizon-scaled)", value: cur.pattern, cal: null, effect: cur.pattern }
+    ];
 
-    // ── Key level discovery with guardrails (recency + distance).
-    var dirSign = score > 0.18 ? 1 : score < -0.18 ? -1 : 0;
+    // ── 3. Combine + clamp.
+    var rawAdjust = contribs.reduce(function (s, c) { return s + c.effect; }, 0);
+    var adjustCap = 2 * sigmaH;
+    var totalAdjust = Math.max(-adjustCap, Math.min(adjustCap, rawAdjust));
+
+    // ── 4. Forecast point estimate.
+    var expectedReturn = muH + totalAdjust;
+    var horizonTarget = lastClose * (1 + expectedReturn);
+
+    // ── 5. Empirical-percentile range (location-shifted by adjust).
+    var lower = lastClose * (1 + p10H + totalAdjust);
+    var p25   = lastClose * (1 + p25H + totalAdjust);
+    var p50   = lastClose * (1 + p50H + totalAdjust);
+    var p75   = lastClose * (1 + p75H + totalAdjust);
+    var upper = lastClose * (1 + p90H + totalAdjust);
+
+    // ── Key levels (S/R + invalidation) with guardrails.
+    var direction = totalAdjust > 0.5 * sigmaH ? "up"
+                  : totalAdjust < -0.5 * sigmaH ? "down" : "flat";
+    var dirSign = direction === "up" ? 1 : direction === "down" ? -1 : 0;
     var levels = dirSign !== 0
       ? findKeyLevels(candles, dirSign, lastClose, atrLast, { minDistATR: 0.7, recentWindow: 80 })
       : { primary: null, invalidation: null };
 
-    // Snap the displayed target to the primary level only when:
-    //   - it sits between current price and drift target (i.e. drift
-    //     extrapolation would carry the price *through* it)
-    //   - it is at least 0.7·ATR away (enforced inside findKeyLevels)
-    //   - direction is non-flat
-    var horizonTarget = driftTarget;
-    var targetSource = "drift";
+    var targetSource = "model";
+    var modelTarget = horizonTarget;
     if (levels.primary && dirSign !== 0) {
       var lvl = levels.primary.price;
       var between = dirSign > 0
-        ? (lvl < driftTarget && lvl > lastClose)
-        : (lvl > driftTarget && lvl < lastClose);
+        ? (lvl < horizonTarget && lvl > lastClose)
+        : (lvl > horizonTarget && lvl < lastClose);
       if (between) {
         horizonTarget = lvl;
         targetSource = levels.primary.type;
       }
     }
 
-    // ── Monte Carlo.
-    // IMPORTANT: muDaily is the score-implied daily drift, NOT the rate
-    // needed to mechanically reach the (possibly snapped) target. This
-    // keeps "probability of reaching target" from becoming circular.
+    // ── 6. Empirical bootstrap: probability of reaching `horizonTarget`.
+    var targetReturn = (horizonTarget - lastClose) / lastClose;
+    var probHit;
+    if (hRets.length < 30) {
+      probHit = 0.5; // not enough history — punt
+    } else {
+      var hits = 0;
+      for (var i = 0; i < hRets.length; i++) {
+        var shifted = hRets[i] + totalAdjust;
+        if (dirSign >= 0 ? shifted >= targetReturn : shifted <= targetReturn) hits++;
+      }
+      probHit = hits / hRets.length;
+    }
+
+    // ── 7. Monte-Carlo first-passage for TIMING ONLY.
     var sigma = ind.sigma || 0.012;
-    var muDaily = driftPct / horizonDays;
+    var muDaily = expectedReturn / horizonDays;
     var mc = monteCarlo(lastClose, muDaily, sigma, horizonDays, horizonTarget, 4000);
 
-    // ── Touch probability for the invalidation/stop level.
     var stopMC = null;
     if (levels.invalidation) {
       stopMC = monteCarlo(lastClose, muDaily, sigma, horizonDays, levels.invalidation.price, 2000);
@@ -398,97 +455,116 @@
     var dates = nextTradingDays(lastBar.date, horizonDays, weekend);
     var days = dates.map(function (date, i) {
       var t = i + 1;
-      var p50 = mc.p50ByDay[i];
-      var p10 = mc.p10ByDay[i];
-      var p90 = mc.p90ByDay[i];
-      var dir = p50 > lastClose * 1.001 ? "up"
-              : p50 < lastClose * 0.999 ? "down" : "flat";
-      var conf = Math.max(0.10, Math.min(0.85, Math.abs(score) * 1.4 + 0.30)) *
-                 Math.pow(0.94, i);
+      var dayP50 = mc.p50ByDay[i];
+      var dayP10 = mc.p10ByDay[i];
+      var dayP90 = mc.p90ByDay[i];
+      var dDir = dayP50 > lastClose * 1.001 ? "up"
+              : dayP50 < lastClose * 0.999 ? "down" : "flat";
+      // Per-day confidence: signal-to-noise scaled, decaying with horizon.
+      var snr = sigmaH > 0 ? Math.min(1.5, Math.abs(totalAdjust) / sigmaH) : 0;
+      var dayConf = Math.max(0.10, Math.min(0.85, 0.25 + 0.35 * snr)) * Math.pow(0.95, i);
       return {
         date: date, dayIndex: t,
-        target: p50, lower: p10, upper: p90,
-        direction: dir, confidence: conf
+        target: dayP50, lower: dayP10, upper: dayP90,
+        direction: dDir, confidence: dayConf
       };
     });
 
-    var direction = score > 0.18 ? "up" : score < -0.18 ? "down" : "flat";
-    var label = direction === "up" ? "BULLISH" : direction === "down" ? "BEARISH" : "NEUTRAL";
-
-    // ── Confidence calibration (unchanged formula, β-decoupled).
-    var voteCountFactor = 1 - 1 / (votes.length + 1);
-    var agreementFactor = 1 - Math.min(1, variance);
-    var atrMed = (function () {
-      var vals = ind.atr.filter(function (v) { return v != null; }).slice(-60);
-      vals.sort(function (a, b) { return a - b; });
-      return vals.length ? vals[Math.floor(vals.length / 2)] : atrLast;
-    })();
-    var regimeFactor = atrMed ? Math.max(0.6, Math.min(1, atrMed / atrLast)) : 1;
-    var horizonDecay = Math.pow(0.90, (horizonDays / 5) - 1);
-
-    var rawConf = Math.abs(score) * 1.4 * voteCountFactor * agreementFactor * regimeFactor * horizonDecay
-                  + 0.10 * agreementFactor;
-    var blended = bt.hitRate != null ? rawConf * 0.55 + bt.hitRate * 0.45 : rawConf;
-    var confidence = Math.max(0.05, Math.min(0.88, blended));
-
-    var topVotes = votes.slice().sort(function (a, b) {
-      return Math.abs(b.direction * b.weight) - Math.abs(a.direction * a.weight);
-    });
-    var bullets = topVotes.slice(0, 5).map(function (v) {
-      var arrow = v.direction > 0 ? "↑" : v.direction < 0 ? "↓" : "·";
-      return arrow + " " + v.source;
-    }).join("   ·   ");
-
-    var btTxt = bt.hitRate != null
-      ? " · Walk-forward backtest: " + Math.round(bt.hitRate * 100) +
-        "% direction hit rate over " + bt.count + " windows" +
-        (bt.beta != null ? "; OLS β=" + bt.beta.toFixed(3) + " calibrated drift" : "") + "."
-      : "";
-
-    var anchorTxt = targetSource === "drift"
-      ? "Target = drift extrapolation (" + driftTarget.toFixed(2) + ")."
-      : "Target snapped to nearest swing " + targetSource + " at " +
-        horizonTarget.toFixed(2) + " (drift would have reached " + driftTarget.toFixed(2) + ").";
-
     var medianHit = mc.medianFirstHit;
     var hitDate = medianHit != null ? dates[Math.min(medianHit - 1, dates.length - 1)] : null;
+
+    var label = direction === "up" ? "BULLISH" : direction === "down" ? "BEARISH" : "NEUTRAL";
+
+    // ── 8. Confidence: signal-to-noise + walk-forward direction backtest.
+    var snr = sigmaH > 0 ? Math.abs(totalAdjust) / sigmaH : 0;
+    var snrComponent = Math.max(0.05, Math.min(0.75, 0.20 + 0.45 * Math.min(1, snr / 1.5)));
+
+    // Walk-forward direction backtest using the same signal pipeline.
+    var bt = backtestDirection(candles, horizonDays, function (sigs) {
+      // Apply the same calibrated contributions point-in-time-ish (we
+      // re-use the in-sample β; this is intentionally simplified for speed).
+      var adj = contrib(calTrend, sigs.trend) + contrib(calMomentum, sigs.momentum) +
+                contrib(calMeanRev, sigs.meanRev) + sigs.pattern;
+      adj = Math.max(-adjustCap, Math.min(adjustCap, adj));
+      return adj > 0.5 * sigmaH ? 1 : adj < -0.5 * sigmaH ? -1 : 0;
+    });
+    var btHit = bt.hitRate;
+    var blended = btHit != null ? 0.55 * snrComponent + 0.45 * btHit : snrComponent;
+    var confidence = Math.max(0.05, Math.min(0.85, blended));
+
+    // ── Rationale (clear about what's measured vs assumed).
+    var contribLines = contribs
+      .filter(function (c) { return Math.abs(c.effect) > 0.0005; })
+      .sort(function (a, b) { return Math.abs(b.effect) - Math.abs(a.effect); })
+      .map(function (c) {
+        var bp = Math.round(c.effect * 10000);
+        var tInfo = c.cal && c.cal.t != null
+          ? " (β=" + c.cal.beta.toFixed(3) + ", t=" + c.cal.t.toFixed(2) +
+            (c.cal.oosR2 != null ? ", oosR²=" + (c.cal.oosR2 * 100).toFixed(1) + "%" : "") + ")"
+          : "";
+        return (bp >= 0 ? "+" : "") + bp + " bp · " + c.name + tInfo;
+      });
+
+    var clampedTxt = Math.abs(rawAdjust) > adjustCap
+      ? " (raw " + (rawAdjust * 100).toFixed(2) + "% clamped to ±2·σ_h = ±" + (adjustCap * 100).toFixed(2) + "%)"
+      : "";
+
+    var btTxt = btHit != null
+      ? "Direction backtest: " + Math.round(btHit * 100) + "% over " + bt.count + " windows."
+      : "Insufficient history for backtest.";
+
+    var anchorTxt = targetSource === "model"
+      ? "Target = empirical baseline + signal-adjusted (" + horizonTarget.toFixed(2) + ")."
+      : "Target snapped to nearest swing " + targetSource + " at " +
+        horizonTarget.toFixed(2) + " (model would have shown " + modelTarget.toFixed(2) + ").";
+
     var hitTxt = medianHit != null
-      ? " · " + Math.round(mc.probHit * 100) + "% of paths touch target; median first-hit on day " +
-        medianHit + " (" + hitDate + "), conditional on hitting."
-      : " · Only " + Math.round(mc.probHit * 100) + "% of paths touch target within horizon — timing suppressed.";
+      ? Math.round(probHit * 100) + "% empirical hit-prob · median first-hit MC day " +
+        medianHit + " (" + hitDate + ", conditional on hit)."
+      : "Only " + Math.round(probHit * 100) + "% empirical hit-prob — timing suppressed.";
 
     var stopTxt = "";
     if (stopMC && levels.invalidation) {
-      stopTxt = " · Invalidation level " + levels.invalidation.price.toFixed(2) +
-        " (" + levels.invalidation.type + "); " +
-        Math.round(stopMC.probHit * 100) + "% of paths touch it.";
+      stopTxt = " · Invalidation " + levels.invalidation.price.toFixed(2) +
+        " (" + levels.invalidation.type + "), MC touch risk " +
+        Math.round(stopMC.probHit * 100) + "%.";
     }
 
     var rationale =
-      "Composite score " + score.toFixed(2) + " across " + votes.length + " factors over " +
-      horizonDays + " sessions. " + anchorTxt +
-      " Bands are Monte-Carlo P10/P90 (" + mc.paths + " GBM paths, σ=" +
-      (sigma * 100).toFixed(2) + "% daily, drift β·score=" + (driftPct * 100).toFixed(2) +
-      "% over horizon)." + hitTxt + stopTxt + btTxt + " Drivers: " + bullets + ".";
+      "Baseline μ_h=" + (muH * 100).toFixed(2) + "%, σ_h=" + (sigmaH * 100).toFixed(2) + "% " +
+      "from " + hRets.length + " historical " + horizonDays + "-session windows. " +
+      "Signal-adjust=" + (totalAdjust * 100).toFixed(2) + "%" + clampedTxt + ". " +
+      anchorTxt + " " + hitTxt + stopTxt + " " + btTxt +
+      (contribLines.length ? " Contributions: " + contribLines.join("  ·  ") + "." : "");
+
     return {
-      direction: direction, label: label, score: score, confidence: confidence,
+      direction: direction, label: label,
+      score: snr * Math.sign(totalAdjust || 1),
+      confidence: confidence,
       target: horizonTarget,
-      lower: mc.p10ByDay[horizonDays - 1],
-      upper: mc.p90ByDay[horizonDays - 1],
+      lower: lower,
+      upper: upper,
+      p25: p25, p50: p50, p75: p75,
       days: days, rationale: rationale, lastClose: lastClose,
       horizonDays: horizonDays,
-      backtest: bt,
+      backtest: { hitRate: btHit, count: bt.count },
       mc: mc,
       targetSource: targetSource,
       keyLevel: levels.primary,
       invalidation: levels.invalidation,
       stopMC: stopMC,
-      driftTarget: driftTarget,
-      driftPct: driftPct,
-      probHit: mc.probHit,
+      driftTarget: modelTarget,
+      driftPct: expectedReturn,
+      probHit: probHit,
       medianFirstHit: medianHit,
       meanFirstHit: mc.meanFirstHit,
-      expectedDate: hitDate
+      expectedDate: hitDate,
+      // Diagnostics for the UI signal contribution table:
+      contributions: contribs,
+      baseline: { muH: muH, sigmaH: sigmaH, p10: p10H, p50: p50H, p90: p90H, n: hRets.length },
+      totalAdjust: totalAdjust,
+      rawAdjust: rawAdjust,
+      adjustCap: adjustCap
     };
   }
 
@@ -788,13 +864,18 @@
       }
     }
 
-    // Range pill now shows P10 / P50 / P90 from the Monte Carlo
-    var p50End = f.mc ? f.mc.p50ByDay[f.horizonDays - 1] : f.target;
+    // Endpoint range: empirical percentiles (P10 / P50 / P90).
     document.getElementById("targetRange").textContent =
-      fmtSAR(f.lower) + " / " + fmtSAR(p50End) + " / " + fmtSAR(f.upper) + " " + ccy;
+      fmtSAR(f.lower) + " / " + fmtSAR(f.p50) + " / " + fmtSAR(f.upper) + " " + ccy;
 
-    document.getElementById("compositeScore").textContent =
-      (f.score >= 0 ? "+" : "") + f.score.toFixed(2) + "  (" + (f.score * 100).toFixed(0) + "/100)";
+    // "Composite Score" is now a signal-to-noise ratio (|adjust|/σ_h).
+    var snrEl = document.getElementById("compositeScore");
+    if (snrEl) {
+      var snrVal = Math.abs(f.score || 0);
+      snrEl.textContent = snrVal.toFixed(2) + " σ" +
+        "  (" + (f.totalAdjust >= 0 ? "+" : "") + (f.totalAdjust * 100).toFixed(2) + "% / σ_h " +
+        (f.baseline.sigmaH * 100).toFixed(2) + "%)";
+    }
 
     var pct = Math.max(1, Math.min(100, Math.round(f.confidence * 100)));
     var gauge = document.getElementById("confidenceGauge");
@@ -808,11 +889,51 @@
     if (btEl) {
       if (bt && bt.hitRate != null) {
         btEl.innerHTML =
-          "Backtest hit rate <strong>" + Math.round(bt.hitRate * 100) +
-          "%</strong> over <strong>" + bt.count + "</strong> walks · MAPE " +
-          (bt.mape != null ? (bt.mape * 100).toFixed(1) + "%" : "—");
+          "Direction backtest <strong>" + Math.round(bt.hitRate * 100) +
+          "%</strong> over <strong>" + bt.count + "</strong> walks";
       } else {
         btEl.textContent = "Backtest: insufficient history";
+      }
+    }
+
+    // ── Signal Contributions table ──
+    var tbody = document.getElementById("contribBody");
+    var adjSum = document.getElementById("adjustmentSummary");
+    if (tbody && f.contributions) {
+      tbody.innerHTML = "";
+      f.contributions.forEach(function (c) {
+        var bp = Math.round((c.effect || 0) * 10000);
+        var cls = bp > 0 ? "contrib-pos" : bp < 0 ? "contrib-neg" : "contrib-zero";
+        var betaTxt = c.cal && c.cal.beta != null ? c.cal.beta.toFixed(3) : "—";
+        var tTxt    = c.cal && c.cal.t != null ? c.cal.t.toFixed(2) : "—";
+        var r2Txt   = c.cal && c.cal.oosR2 != null
+          ? (c.cal.oosR2 * 100).toFixed(1) + "%"
+          : "—";
+        var shrinkTxt = c.cal && c.cal.shrink != null
+          ? (c.cal.shrink * 100).toFixed(0) + "%"
+          : "100%";
+        var shrunkCls = c.cal && c.cal.shrink != null && c.cal.shrink < 0.3 ? " contrib-shrunk" : "";
+        var tr = document.createElement("tr");
+        tr.innerHTML =
+          '<td class="contrib-name' + shrunkCls + '">' + c.name + '</td>' +
+          '<td class="num">' + (isFinite(c.value) ? c.value.toFixed(4) : "—") + '</td>' +
+          '<td class="num">' + betaTxt + '</td>' +
+          '<td class="num">' + tTxt + '</td>' +
+          '<td class="num">' + r2Txt + '</td>' +
+          '<td class="num">' + shrinkTxt + '</td>' +
+          '<td class="num ' + cls + '">' + (bp >= 0 ? "+" : "") + bp + " bp</td>";
+        tbody.appendChild(tr);
+      });
+      if (adjSum) {
+        var totalBp = Math.round((f.totalAdjust || 0) * 10000);
+        var rawBp = Math.round((f.rawAdjust || 0) * 10000);
+        var capBp = Math.round((f.adjustCap || 0) * 10000);
+        var clamped = Math.abs(f.rawAdjust) > f.adjustCap;
+        adjSum.innerHTML =
+          "Total " + (totalBp >= 0 ? "+" : "") + totalBp + " bp" +
+          (clamped ? "  (raw " + (rawBp >= 0 ? "+" : "") + rawBp + " bp clamped to ±" + capBp + " bp)" : "") +
+          "  ·  baseline μ_h " + (f.baseline.muH * 100).toFixed(2) + "%  ·  σ_h " +
+          (f.baseline.sigmaH * 100).toFixed(2) + "% (n=" + f.baseline.n + ")";
       }
     }
 

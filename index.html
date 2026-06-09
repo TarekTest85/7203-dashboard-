@@ -181,17 +181,38 @@
           <div class="sum-sub" id="stopRisk">—</div>
         </div>
         <div class="sum-stat">
-          <div class="sum-label">P10 / P50 / P90 (end)</div>
+          <div class="sum-label">P10 / P50 / P90 (empirical)</div>
           <div class="sum-value" id="targetRange">—</div>
         </div>
         <div class="sum-stat">
-          <div class="sum-label">Composite Score</div>
+          <div class="sum-label">Signal / Noise</div>
           <div class="sum-value" id="compositeScore">—</div>
         </div>
       </div>
     </div>
 
     <div class="day-cards" id="dayCards"></div>
+
+    <div class="contributions" id="contributionsBlock">
+      <div class="contributions-head">
+        <h3>Signal Contributions</h3>
+        <span class="muted small" id="adjustmentSummary">—</span>
+      </div>
+      <table class="contrib-table" id="contribTable">
+        <thead>
+          <tr>
+            <th>Signal</th>
+            <th class="num">Current</th>
+            <th class="num">β</th>
+            <th class="num">t-stat</th>
+            <th class="num">OOS R²</th>
+            <th class="num">Shrink</th>
+            <th class="num">Contribution</th>
+          </tr>
+        </thead>
+        <tbody id="contribBody"></tbody>
+      </table>
+    </div>
 
     <p id="rationale" class="rationale">—</p>
   </section>
