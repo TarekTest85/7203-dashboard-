@@ -603,6 +603,151 @@ main {
   color: var(--text-2);
 }
 
+/* ───────────────────────────  Action bar  ─────────────────────────── */
+.action-bar {
+  display: grid;
+  grid-template-columns: minmax(180px, 220px) 1fr;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 16px;
+  border-radius: var(--radius);
+  border: 1px solid var(--line);
+  background: rgba(255,255,255,0.02);
+}
+@media (max-width: 700px) { .action-bar { grid-template-columns: 1fr; } }
+
+.action-badge {
+  border-radius: 12px;
+  padding: 18px 16px;
+  text-align: center;
+  border: 1px solid var(--line-strong);
+  background: rgba(255,255,255,0.03);
+}
+.action-badge .action-label {
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  margin-bottom: 4px;
+}
+.action-badge .action-sub {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  font-weight: 600;
+}
+.action-buy {
+  background: rgba(46, 224, 164, 0.10);
+  border-color: rgba(46, 224, 164, 0.45);
+  box-shadow: 0 0 0 4px rgba(46, 224, 164, 0.05);
+}
+.action-buy .action-label { color: var(--green); }
+.action-sell {
+  background: rgba(255, 97, 120, 0.10);
+  border-color: rgba(255, 97, 120, 0.45);
+  box-shadow: 0 0 0 4px rgba(255, 97, 120, 0.05);
+}
+.action-sell .action-label { color: var(--red); }
+.action-hold {
+  background: rgba(255, 201, 96, 0.06);
+  border-color: rgba(255, 201, 96, 0.30);
+}
+.action-hold .action-label { color: var(--yellow); }
+
+.action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+}
+.action-stat {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 12px;
+}
+.action-stat-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.action-stat-value {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--text);
+}
+.action-stat-sub {
+  font-size: 10.5px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* ───────────────────────────  Rules table  ─────────────────────────── */
+.rules-block {
+  margin-top: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255,255,255,0.02);
+  padding: 14px 16px;
+}
+.rules-head {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin-bottom: 8px;
+}
+.rules-block h3 {
+  margin: 0; font-size: 13px; font-weight: 600;
+  color: var(--text); letter-spacing: 0.04em; text-transform: uppercase;
+}
+.rules-table {
+  width: 100%; border-collapse: collapse;
+  font-size: 12.5px;
+}
+.rules-table th {
+  text-align: left; font-weight: 600; color: var(--muted);
+  padding: 6px 8px; border-bottom: 1px solid var(--line);
+  text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.5px;
+}
+.rules-table td {
+  padding: 8px; border-bottom: 1px solid rgba(255,255,255,0.04);
+  color: var(--text-2);
+}
+.rules-table tr:last-child td { border-bottom: none; }
+.rules-table .num { text-align: right; font-family: var(--font-mono); }
+.rules-table .rule-name { color: var(--text); font-weight: 500; }
+.rules-table .rule-desc { display: block; font-size: 11px; color: var(--muted); margin-top: 2px; font-weight: 400; }
+.rule-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.5px;
+}
+.rule-tag-buy { color: var(--green); background: rgba(46,224,164,0.12); border: 1px solid rgba(46,224,164,0.3); }
+.rule-tag-sell { color: var(--red); background: rgba(255,97,120,0.12); border: 1px solid rgba(255,97,120,0.3); }
+.rule-fired {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--green);
+}
+.rule-fired::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--green); box-shadow: 0 0 6px var(--green);
+}
+.rule-fired.sell { color: var(--red); }
+.rule-fired.sell::before { background: var(--red); box-shadow: 0 0 6px var(--red); }
+.rule-quiet {
+  font-size: 11px;
+  color: var(--muted);
+}
+.rules-note { margin: 10px 0 0; line-height: 1.5; }
+
 .contributions {
   margin-top: 14px;
   border: 1px solid var(--line);

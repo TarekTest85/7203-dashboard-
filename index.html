@@ -149,6 +149,33 @@
       </div>
     </div>
 
+    <div class="action-bar" id="actionBar">
+      <div class="action-badge action-hold" id="actionBadge">
+        <div class="action-label">HOLD</div>
+        <div class="action-sub" id="actionSub">No rule fired</div>
+      </div>
+      <div class="action-grid">
+        <div class="action-stat">
+          <div class="action-stat-label">Buy rules fired</div>
+          <div class="action-stat-value" id="actionFiredBuy">0</div>
+        </div>
+        <div class="action-stat">
+          <div class="action-stat-label">Sell rules fired</div>
+          <div class="action-stat-value" id="actionFiredSell">0</div>
+        </div>
+        <div class="action-stat">
+          <div class="action-stat-label">Risk / Reward</div>
+          <div class="action-stat-value" id="actionRR">—</div>
+          <div class="action-stat-sub" id="actionRRSub">—</div>
+        </div>
+        <div class="action-stat">
+          <div class="action-stat-label">Suggested size (¼ Kelly)</div>
+          <div class="action-stat-value" id="actionPos">—</div>
+          <div class="action-stat-sub">of capital · advisory only</div>
+        </div>
+      </div>
+    </div>
+
     <div class="forecast-summary">
       <div class="confidence-block">
         <div class="gauge" id="confidenceGauge" style="--pct: 0">
@@ -214,6 +241,30 @@
       </table>
     </div>
 
+    <div class="rules-block">
+      <div class="rules-head">
+        <h3>Buy / Sell Signal Rules</h3>
+        <span class="muted small" id="rulesSummary">—</span>
+      </div>
+      <table class="rules-table">
+        <thead>
+          <tr>
+            <th>Rule</th>
+            <th>Action</th>
+            <th>Status</th>
+            <th class="num">Hit rate</th>
+            <th class="num">Avg fwd</th>
+            <th class="num">Fires</th>
+          </tr>
+        </thead>
+        <tbody id="rulesBody"></tbody>
+      </table>
+      <p class="rules-note muted small">
+        Hit rate = % of historical firings where the h-day forward return matched the rule's direction.
+        Avg fwd = mean h-day forward return after each firing.
+      </p>
+    </div>
+
     <p id="rationale" class="rationale">—</p>
   </section>
 
@@ -227,6 +278,8 @@
 <script src="live.js"></script>
 <script src="indicators.js"></script>
 <script src="patterns.js"></script>
+<script src="forecast.js"></script>
+<script src="signals.js"></script>
 <script src="history.js"></script>
 <script src="app.js"></script>
 </body>
