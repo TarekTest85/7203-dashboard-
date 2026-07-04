@@ -307,11 +307,68 @@
     return true;
   }
 
+  // Combines forecast direction (model bias) with rule action into one
+  // plain-language line. The two can agree, disagree softly, or conflict.
+  function computeOutlook(f, sig) {
+    var dir = f.direction;                  // "up" | "down" | "flat"
+    var act = sig ? sig.action : "HOLD";    // "BUY" | "HOLD" | "SELL"
+    var snr = f.baseline && f.baseline.sigmaH > 0
+      ? Math.abs(f.totalAdjust) / f.baseline.sigmaH : 0;
+    var driftBp = Math.round((f.totalAdjust || 0) * 10000);
+    var driftSign = driftBp >= 0 ? "+" : "";
+    var rrLine = sig && sig.rr != null ? " · R:R " + sig.rr.toFixed(2) + ":1" : "";
+
+    if (act === "BUY" && dir === "up") {
+      return { tone: "strong-buy", icon: "↑",
+        headline: "Aligned bullish setup",
+        sub: "Rules AND model both point up. Score " + sig.score.toFixed(2) +
+             " · signal-adjust " + driftSign + driftBp + " bp" + rrLine + "." };
+    }
+    if (act === "SELL" && dir === "down") {
+      return { tone: "strong-sell", icon: "↓",
+        headline: "Aligned bearish setup",
+        sub: "Rules AND model both point down. Score " + sig.score.toFixed(2) +
+             " · signal-adjust " + driftSign + driftBp + " bp" + rrLine + "." };
+    }
+    if (act === "HOLD" && dir === "up") {
+      return { tone: "watch-buy", icon: "?",
+        headline: "Bullish drift — no entry trigger",
+        sub: "Model favours upside (" + driftSign + driftBp + " bp, " +
+             snr.toFixed(2) + "σ) but no BUY rule fired. Wait for confirmation." };
+    }
+    if (act === "HOLD" && dir === "down") {
+      return { tone: "watch-sell", icon: "?",
+        headline: "Bearish drift — no entry trigger",
+        sub: "Model favours downside (" + driftSign + driftBp + " bp, " +
+             snr.toFixed(2) + "σ) but no SELL rule fired. Wait for confirmation." };
+    }
+    if (act === "HOLD" && dir === "flat") {
+      return { tone: "neutral", icon: "·",
+        headline: "No clear edge",
+        sub: "Signal-adjust " + driftSign + driftBp + " bp is inside the ±0.5σ deadband and no rule fired." };
+    }
+    if ((act === "BUY" && dir === "down") || (act === "SELL" && dir === "up")) {
+      return { tone: "conflict", icon: "⚠",
+        headline: (act === "BUY" ? "BUY rule vs bearish drift" : "SELL rule vs bullish drift"),
+        sub: "Rule fired against the model's " + (dir === "up" ? "bullish" : "bearish") +
+             " bias (" + driftSign + driftBp + " bp). Trade small if at all, tight stop" + rrLine + "." };
+    }
+    return { tone: "neutral", icon: "·", headline: "—", sub: "" };
+  }
+
   function applyForecast(f, ccy) {
     var badge = document.getElementById("trendBadge");
     badge.textContent = f.label;
     badge.classList.remove("up", "down", "flat");
     badge.classList.add(f.direction);
+
+    // ── Combined outlook (reconciles forecast direction × rule action) ──
+    var outlook = computeOutlook(f, f.signals);
+    var outlookEl = document.getElementById("outlookBar");
+    outlookEl.className = "outlook tone-" + outlook.tone;
+    document.getElementById("outlookIcon").textContent = outlook.icon;
+    document.getElementById("outlookHeadline").textContent = outlook.headline;
+    document.getElementById("outlookSub").textContent = outlook.sub;
 
     // ── Action bar (BUY/HOLD/SELL + R:R + position size) ──
     if (f.signals) {
@@ -586,6 +643,45 @@
   document.getElementById("refreshBtn").addEventListener("click", function () {
     loadSymbol(state.symbol.replace(/\.SR$/i, ""), { save: true });
   });
+
+  // CSV upload: opens a hidden file picker, parses on select, loads bars
+  // directly into state.rows so it bypasses live-fetch entirely.
+  var csvBtn = document.getElementById("csvUploadBtn");
+  var csvInput = document.getElementById("csvFileInput");
+  if (csvBtn && csvInput) {
+    csvBtn.addEventListener("click", function () { csvInput.click(); });
+    csvInput.addEventListener("change", function (e) {
+      var file = e.target.files && e.target.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        var result = window.CSVParser.parse(reader.result);
+        if (!result || result.error) {
+          alert("CSV parse failed: " + (result && result.error ? result.error : "unknown"));
+          return;
+        }
+        if (result.bars.length < 30) {
+          alert("Only " + result.bars.length + " valid bars parsed. Need at least 30 for the model.");
+          return;
+        }
+        state.rows = result.bars;
+        state.source = "csv";
+        // Try to infer symbol from filename: "TADAWUL_7203_something.csv" → "7203"
+        var m = file.name.match(/(\d{4})/);
+        if (m) {
+          state.symbol = m[1] + ".SR";
+          document.getElementById("symbolInput").value = m[1];
+        }
+        render({ save: true });
+        var srcEl = document.getElementById("dataSource");
+        srcEl.classList.remove("live", "fallback");
+        srcEl.textContent = "csv · " + result.bars.length + " bars · " + result.bars[result.bars.length - 1].date;
+        srcEl.title = "Loaded from " + file.name + " (" + result.format + " format)";
+      };
+      reader.readAsText(file, "utf-8");
+      csvInput.value = ""; // allow re-selecting same file
+    });
+  }
 
   // Horizon segmented control
   document.querySelectorAll(".seg-btn").forEach(function (b) {

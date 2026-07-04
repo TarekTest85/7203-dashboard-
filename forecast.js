@@ -239,9 +239,14 @@
     var closes = ind.closes;
 
     var hRets = Indicators.horizonReturns(closes, horizonDays);
-    var muH = hRets.length ? hRets.reduce(function (s, v) { return s + v; }, 0) / hRets.length : 0;
-    var sigmaH = hRets.length ? Indicators.stdev(hRets) : 0.02;
-    var pct = function (q) { return Indicators.percentile(hRets, q); };
+    // Recency-weighted baseline (exponential decay, half-life 30 sessions).
+    // Weights recent bars 2× every 30 bars back, so μ_h and σ_h reflect
+    // the CURRENT stock behaviour rather than a long synthetic prior.
+    var HALF_LIFE = 30;
+    var wStats = hRets.length ? Indicators.weightedStats(hRets, HALF_LIFE) : { mean: 0, stdev: 0.02 };
+    var muH = wStats.mean;
+    var sigmaH = wStats.stdev;
+    var pct = function (q) { return Indicators.weightedPercentile(hRets, q, HALF_LIFE); };
     var p10H = pct(0.10), p25H = pct(0.25), p50H = pct(0.50), p75H = pct(0.75), p90H = pct(0.90);
 
     var series = signalSeries(candles, ind);
@@ -300,12 +305,17 @@
     if (hRets.length < 30) {
       probHit = 0.5;
     } else {
-      var hits = 0;
-      for (var i = 0; i < hRets.length; i++) {
+      // Same exponential weighting as the baseline: recent bootstrap
+      // draws count more than ancient ones.
+      var n = hRets.length;
+      var hitsW = 0, totalW = 0;
+      for (var i = 0; i < n; i++) {
+        var w = Math.pow(0.5, (n - 1 - i) / HALF_LIFE);
         var shifted = hRets[i] + totalAdjust;
-        if (dirSign >= 0 ? shifted >= targetReturn : shifted <= targetReturn) hits++;
+        totalW += w;
+        if (dirSign >= 0 ? shifted >= targetReturn : shifted <= targetReturn) hitsW += w;
       }
-      probHit = hits / hRets.length;
+      probHit = totalW > 0 ? hitsW / totalW : 0.5;
     }
 
     var sigma = ind.sigma || 0.012;
@@ -388,7 +398,8 @@
     }
 
     var rationale =
-      "Baseline μ_h=" + (muH * 100).toFixed(2) + "%, σ_h=" + (sigmaH * 100).toFixed(2) + "% " +
+      "Recency-weighted baseline (half-life " + HALF_LIFE + " sessions): μ_h=" +
+      (muH * 100).toFixed(2) + "%, σ_h=" + (sigmaH * 100).toFixed(2) + "% " +
       "from " + hRets.length + " historical " + horizonDays + "-session windows. " +
       "Signal-adjust=" + (totalAdjust * 100).toFixed(2) + "%" + clampedTxt + ". " +
       anchorTxt + " " + hitTxt + stopTxt + " " + btTxt +

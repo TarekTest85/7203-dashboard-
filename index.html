@@ -41,6 +41,10 @@
       <button id="loadSymbolBtn" class="btn btn-primary btn-sm" type="button">Load</button>
     </div>
     <span id="dataSource" class="pill" title="Data source">demo</span>
+    <button id="csvUploadBtn" class="btn btn-ghost btn-sm" type="button" title="Load OHLCV from CSV (Investing.com or Yahoo format)">
+      <span class="btn-icon">⬆</span> CSV
+    </button>
+    <input id="csvFileInput" type="file" accept=".csv,.txt,text/csv" hidden />
     <a href="history.html" class="btn btn-ghost btn-sm" title="Browse history">
       <span class="btn-icon">⌚</span> History
     </a>
@@ -146,6 +150,14 @@
           <button class="seg-btn" data-weeks="4" type="button">4W</button>
         </div>
         <div id="trendBadge" class="trend-badge">—</div>
+      </div>
+    </div>
+
+    <div class="outlook" id="outlookBar">
+      <div class="outlook-icon" id="outlookIcon">·</div>
+      <div class="outlook-body">
+        <div class="outlook-headline" id="outlookHeadline">—</div>
+        <div class="outlook-sub" id="outlookSub">—</div>
       </div>
     </div>
 
@@ -278,6 +290,7 @@
 <script src="live.js"></script>
 <script src="indicators.js"></script>
 <script src="patterns.js"></script>
+<script src="csv.js"></script>
 <script src="forecast.js"></script>
 <script src="signals.js"></script>
 <script src="history.js"></script>

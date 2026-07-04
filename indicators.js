@@ -300,11 +300,57 @@
     return { beta: beta, t: t, r2: r2, n: n };
   }
 
+  // Recency-weighted mean and stdev. `values` is assumed to be in
+  // chronological order (oldest first). Weight of bar at index i is
+  //   w_i = 0.5 ^ ((n − 1 − i) / halfLife)
+  // so the most recent bar has weight 1 and weights halve every
+  // halfLife bars back. Half-life of 30 gives ≈ 6-week decay for
+  // daily bars.
+  function weightedStats(values, halfLife) {
+    if (!values.length) return { mean: 0, stdev: 0, sumWeight: 0 };
+    var n = values.length;
+    var sumW = 0, sumWX = 0;
+    var weights = new Array(n);
+    for (var i = 0; i < n; i++) {
+      weights[i] = Math.pow(0.5, (n - 1 - i) / halfLife);
+      sumW += weights[i];
+      sumWX += weights[i] * values[i];
+    }
+    var mean = sumWX / sumW;
+    var sumWSq = 0;
+    for (var j = 0; j < n; j++) sumWSq += weights[j] * Math.pow(values[j] - mean, 2);
+    return { mean: mean, stdev: Math.sqrt(sumWSq / sumW), sumWeight: sumW };
+  }
+
+  // Weighted percentile. Sort values ascending; step through the sorted
+  // array accumulating each element's weight until the cumulative weight
+  // reaches q × total. Returns the value at that step.
+  function weightedPercentile(values, q, halfLife) {
+    if (!values.length) return 0;
+    var n = values.length;
+    var indexed = new Array(n);
+    var totalW = 0;
+    for (var i = 0; i < n; i++) {
+      var w = Math.pow(0.5, (n - 1 - i) / halfLife);
+      indexed[i] = { v: values[i], w: w };
+      totalW += w;
+    }
+    indexed.sort(function (a, b) { return a.v - b.v; });
+    var target = Math.max(0, Math.min(1, q)) * totalW;
+    var cum = 0;
+    for (var k = 0; k < n; k++) {
+      cum += indexed[k].w;
+      if (cum >= target) return indexed[k].v;
+    }
+    return indexed[n - 1].v;
+  }
+
   window.Indicators = {
     sma: sma, ema: ema, rsi: rsi, macd: macd, atr: atr,
     bollinger: bollinger, adx: adx, roc: roc, stochastic: stochastic,
     dailyReturns: dailyReturns, stdev: stdev, rollingStdev: rollingStdev,
     horizonReturns: horizonReturns, percentile: percentile,
+    weightedStats: weightedStats, weightedPercentile: weightedPercentile,
     correlation: correlation, olsSlope: olsSlope,
     swings: swings
   };
