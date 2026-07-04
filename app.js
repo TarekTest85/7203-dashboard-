@@ -356,7 +356,121 @@
     return { tone: "neutral", icon: "·", headline: "—", sub: "" };
   }
 
+  function renderAdvancedTechniques(f, ccy) {
+    // Regime pill
+    var regimePill = document.getElementById("regimePill");
+    if (regimePill && f.regime) {
+      var r = f.regime;
+      regimePill.className = "regime-pill regime-" + (r.regime || "unknown");
+      regimePill.textContent = (r.regime || "unknown").replace("-", " ") +
+        (r.adx != null ? " · ADX " + r.adx.toFixed(0) : "") +
+        (r.atrRatio != null ? " · ATR " + r.atrRatio.toFixed(2) + "×" : "");
+      regimePill.title = "Confidence multiplier " + (r.confidenceMult || 1).toFixed(2) +
+        " · autocorr(1) " + (r.autocorr1 || 0).toFixed(2);
+    }
+
+    // Candlestick patterns
+    var candleEl = document.getElementById("candleList");
+    if (candleEl) {
+      var patterns = f.candlesticks || [];
+      if (!patterns.length) {
+        candleEl.innerHTML = '<div class="muted small">No canonical pattern detected on the last bar.</div>';
+      } else {
+        candleEl.innerHTML = patterns.map(function (p) {
+          var tag = '<span class="tech-tag ' + (p.direction === "bull" ? "tech-tag-bull" : "tech-tag-bear") + '">' +
+                    p.direction.toUpperCase() + '</span>';
+          var strength = Math.round(p.strength * 100);
+          return '<div class="tech-item">' + tag +
+            '<div><span class="tech-name">' + p.name + '</span>' +
+            ' <span class="muted small">strength ' + strength + '%</span>' +
+            '<span class="tech-desc">' + p.description + '</span></div>' +
+            '</div>';
+        }).join("");
+      }
+    }
+
+    // Divergences
+    var divEl = document.getElementById("divergenceList");
+    if (divEl) {
+      var divs = f.divergences || {};
+      var items = [];
+      ["rsi", "macd"].forEach(function (name) {
+        var d = divs[name];
+        if (!d) return;
+        var tag = '<span class="tech-tag ' + (d.type === "bullish" ? "tech-tag-bull" : "tech-tag-bear") + '">' +
+                  d.type.toUpperCase() + '</span>';
+        var strength = Math.round((d.strength || 0) * 100);
+        items.push('<div class="tech-item">' + tag +
+          '<div><span class="tech-name">' + name.toUpperCase() + ' divergence</span>' +
+          ' <span class="muted small">strength ' + strength + '%</span>' +
+          '<span class="tech-desc">Price ' + d.firstPrice.toFixed(2) +
+              ' → ' + d.secondPrice.toFixed(2) + '  ·  ' +
+              name.toUpperCase() + ' ' + d.firstInd.toFixed(1) +
+              ' → ' + d.secondInd.toFixed(1) + '</span></div>' +
+          '</div>');
+      });
+      divEl.innerHTML = items.length ? items.join("") :
+        '<div class="muted small">No RSI or MACD divergence detected in the last 30 bars.</div>';
+    }
+
+    // Fibonacci table
+    var fibTbody = document.querySelector("#fibTable tbody");
+    var fibMeta = document.getElementById("fibMeta");
+    if (fibTbody) {
+      fibTbody.innerHTML = "";
+      if (f.fib) {
+        if (fibMeta) fibMeta.textContent = "· swing " + f.fib.direction +
+          " " + f.fib.swingLow.price.toFixed(2) + " → " + f.fib.swingHigh.price.toFixed(2);
+        var price = f.lastClose;
+        var nearestIdx = -1, nearestDist = Infinity;
+        f.fib.retracements.forEach(function (lvl, i) {
+          var d = Math.abs(lvl.price - price);
+          if (d < nearestDist) { nearestDist = d; nearestIdx = i; }
+        });
+        f.fib.retracements.forEach(function (lvl, i) {
+          var tr = document.createElement("tr");
+          if (i === nearestIdx) tr.className = "row-nearest";
+          tr.innerHTML = '<td>' + lvl.label + '</td><td class="num">' +
+            lvl.price.toFixed(2) + " " + ccy + '</td>';
+          fibTbody.appendChild(tr);
+        });
+      } else {
+        if (fibMeta) fibMeta.textContent = "";
+        fibTbody.innerHTML = '<tr><td class="muted">Insufficient history</td></tr>';
+      }
+    }
+
+    // Classic pivots
+    var pTbody = document.querySelector("#pivotsTable tbody");
+    var pMeta = document.getElementById("pivotsMeta");
+    if (pTbody) {
+      pTbody.innerHTML = "";
+      if (f.pivots) {
+        if (pMeta) pMeta.textContent = "· last " + f.pivots.lookback + " sessions";
+        var priceP = f.lastClose;
+        var labels = ["R3","R2","R1","PP","S1","S2","S3"];
+        var nearestKey = null, minDist = Infinity;
+        labels.forEach(function (k) {
+          var dd = Math.abs(f.pivots[k] - priceP);
+          if (dd < minDist) { minDist = dd; nearestKey = k; }
+        });
+        labels.forEach(function (k) {
+          var tr = document.createElement("tr");
+          if (k === nearestKey) tr.className = "row-nearest";
+          tr.innerHTML = '<td>' + k + '</td><td class="num">' +
+            f.pivots[k].toFixed(2) + " " + ccy + '</td>';
+          pTbody.appendChild(tr);
+        });
+      } else {
+        if (pMeta) pMeta.textContent = "";
+        pTbody.innerHTML = '<tr><td class="muted">Insufficient history</td></tr>';
+      }
+    }
+  }
+
   function applyForecast(f, ccy) {
+    renderAdvancedTechniques(f, ccy);
+
     var badge = document.getElementById("trendBadge");
     badge.textContent = f.label;
     badge.classList.remove("up", "down", "flat");

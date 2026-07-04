@@ -358,7 +358,10 @@
     });
     var btHit = bt.hitRate;
     var blended = btHit != null ? 0.55 * snrComponent + 0.45 * btHit : snrComponent;
-    var confidence = Math.max(0.05, Math.min(0.85, blended));
+    // Regime multiplier: volatile → shrink confidence, strong trend → boost.
+    var regime = window.Regime ? window.Regime.classify(candles, ind) : null;
+    var regimeMult = regime ? regime.confidenceMult : 1;
+    var confidence = Math.max(0.05, Math.min(0.85, blended * regimeMult));
 
     var contribLines = contribs
       .filter(function (c) { return Math.abs(c.effect) > 0.0005; })
@@ -430,7 +433,13 @@
       baseline: { muH: muH, sigmaH: sigmaH, p10: p10H, p50: p50H, p90: p90H, n: hRets.length },
       totalAdjust: totalAdjust,
       rawAdjust: rawAdjust,
-      adjustCap: adjustCap
+      adjustCap: adjustCap,
+      // Advanced-analysis payload attached for the UI
+      regime: regime,
+      candlesticks: window.Candlesticks ? window.Candlesticks.detectAll(candles) : [],
+      divergences: window.Divergence ? window.Divergence.detectAll(candles, ind) : {},
+      fib: window.Levels ? window.Levels.fibonacci(candles, { lookback: 60 }) : null,
+      pivots: window.Levels ? window.Levels.classicPivots(candles, { lookback: 5 }) : null
     };
   }
 

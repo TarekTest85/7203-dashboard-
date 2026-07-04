@@ -603,6 +603,74 @@ main {
   color: var(--text-2);
 }
 
+/* ───────────────────────────  Advanced techniques  ─────────────────────────── */
+.regime-pill {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: rgba(255,255,255,0.03);
+  color: var(--muted);
+}
+.regime-pill.regime-strong-trend { color: var(--green); border-color: rgba(46,224,164,0.5); background: rgba(46,224,164,0.08); }
+.regime-pill.regime-trending     { color: var(--green); border-color: rgba(46,224,164,0.35); background: rgba(46,224,164,0.05); }
+.regime-pill.regime-ranging      { color: var(--yellow); border-color: rgba(255,201,96,0.35); background: rgba(255,201,96,0.05); }
+.regime-pill.regime-volatile     { color: var(--red); border-color: rgba(255,97,120,0.4); background: rgba(255,97,120,0.05); }
+.regime-pill.regime-transitional { color: var(--text-2); }
+
+.techniques-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+.tech-block {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px;
+}
+.tech-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.tech-list { font-size: 13px; color: var(--text-2); line-height: 1.6; }
+.tech-list .tech-item {
+  padding: 6px 0;
+  border-bottom: 1px dashed rgba(255,255,255,0.05);
+  display: flex; align-items: baseline; gap: 8px;
+}
+.tech-list .tech-item:last-child { border-bottom: none; }
+.tech-list .tech-tag {
+  font-size: 10px; font-weight: 700; padding: 2px 6px; border-radius: 4px;
+  text-transform: uppercase; letter-spacing: 0.4px;
+}
+.tech-tag-bull { color: var(--green); background: rgba(46,224,164,0.10); }
+.tech-tag-bear { color: var(--red); background: rgba(255,97,120,0.10); }
+.tech-name { color: var(--text); font-weight: 600; }
+.tech-desc { display: block; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+.mini-table {
+  width: 100%; border-collapse: collapse; font-size: 12.5px;
+  font-family: var(--font-mono);
+}
+.mini-table td {
+  padding: 5px 8px;
+  border-bottom: 1px dashed rgba(255,255,255,0.05);
+  color: var(--text-2);
+}
+.mini-table tr:last-child td { border-bottom: none; }
+.mini-table .num { text-align: right; color: var(--text); font-weight: 600; }
+.mini-table .row-nearest { background: rgba(106,163,255,0.06); }
+.mini-table .row-nearest td { color: var(--accent); }
+
 /* ───────────────────────────  Outlook  ─────────────────────────── */
 .outlook {
   display: grid;

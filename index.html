@@ -136,6 +136,35 @@
     <div id="patternList" class="patterns"></div>
   </section>
 
+  <section class="card">
+    <div class="card-head">
+      <div>
+        <h2>Advanced Techniques</h2>
+        <p class="card-sub">Candlestick patterns, momentum divergence, market regime, Fibonacci retracements and pivot points computed on the loaded series.</p>
+      </div>
+      <div class="regime-pill" id="regimePill">—</div>
+    </div>
+
+    <div class="techniques-grid">
+      <div class="tech-block">
+        <div class="tech-title">Candlestick patterns (last bar)</div>
+        <div id="candleList" class="tech-list">—</div>
+      </div>
+      <div class="tech-block">
+        <div class="tech-title">Momentum divergence</div>
+        <div id="divergenceList" class="tech-list">—</div>
+      </div>
+      <div class="tech-block">
+        <div class="tech-title">Fibonacci retracements <span class="muted small" id="fibMeta"></span></div>
+        <table class="mini-table" id="fibTable"><tbody></tbody></table>
+      </div>
+      <div class="tech-block">
+        <div class="tech-title">Classic pivots <span class="muted small" id="pivotsMeta"></span></div>
+        <table class="mini-table" id="pivotsTable"><tbody></tbody></table>
+      </div>
+    </div>
+  </section>
+
   <section class="card forecast-card">
     <div class="card-head">
       <div>
@@ -291,6 +320,10 @@
 <script src="indicators.js"></script>
 <script src="patterns.js"></script>
 <script src="csv.js"></script>
+<script src="candlesticks.js"></script>
+<script src="divergence.js"></script>
+<script src="levels.js"></script>
+<script src="regime.js"></script>
 <script src="forecast.js"></script>
 <script src="signals.js"></script>
 <script src="history.js"></script>

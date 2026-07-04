@@ -153,6 +153,66 @@
         if (avgVol <= 0 || candles[i].volume < avgVol * 1.2) return { fired: false };
         return { fired: true, strength: 0.65 };
       }
+    },
+    {
+      key: "candle_bull_reversal",
+      name: "Bullish Candlestick Reversal",
+      action: "BUY",
+      description: "Any bullish reversal pattern (engulfing, hammer, morning star, piercing, three white soldiers, dragonfly doji) at bar close",
+      evaluate: function (ind, candles, i) {
+        if (i < 5 || !window.Candlesticks) return { fired: false };
+        var found = false, maxStrength = 0;
+        window.Candlesticks.PATTERNS.forEach(function (p) {
+          if (p.direction !== "bull") return;
+          var r = p.detect(candles, i);
+          if (r) { found = true; if (r.strength > maxStrength) maxStrength = r.strength; }
+        });
+        if (!found) return { fired: false };
+        return { fired: true, strength: 0.4 + 0.5 * maxStrength };
+      }
+    },
+    {
+      key: "candle_bear_reversal",
+      name: "Bearish Candlestick Reversal",
+      action: "SELL",
+      description: "Any bearish reversal pattern (engulfing, shooting star, evening star, dark cloud, three black crows, gravestone doji) at bar close",
+      evaluate: function (ind, candles, i) {
+        if (i < 5 || !window.Candlesticks) return { fired: false };
+        var found = false, maxStrength = 0;
+        window.Candlesticks.PATTERNS.forEach(function (p) {
+          if (p.direction !== "bear") return;
+          var r = p.detect(candles, i);
+          if (r) { found = true; if (r.strength > maxStrength) maxStrength = r.strength; }
+        });
+        if (!found) return { fired: false };
+        return { fired: true, strength: 0.4 + 0.5 * maxStrength };
+      }
+    },
+    {
+      key: "rsi_bull_divergence",
+      name: "Bullish RSI Divergence",
+      action: "BUY",
+      description: "Price makes a lower low while RSI makes a higher low over the last ~30 bars — fading downside momentum",
+      evaluate: function (ind, candles, i) {
+        if (i < 30 || !window.Divergence) return { fired: false };
+        var div = window.Divergence.detectOne(candles, ind.rsi, i, 30, 0.01, 3);
+        if (!div || div.type !== "bullish") return { fired: false };
+        if (i - div.secondIdx > 4) return { fired: false }; // needs to be recent
+        return { fired: true, strength: 0.5 + 0.4 * div.strength };
+      }
+    },
+    {
+      key: "rsi_bear_divergence",
+      name: "Bearish RSI Divergence",
+      action: "SELL",
+      description: "Price makes a higher high while RSI makes a lower high over the last ~30 bars — fading upside momentum",
+      evaluate: function (ind, candles, i) {
+        if (i < 30 || !window.Divergence) return { fired: false };
+        var div = window.Divergence.detectOne(candles, ind.rsi, i, 30, 0.01, 3);
+        if (!div || div.type !== "bearish") return { fired: false };
+        if (i - div.secondIdx > 4) return { fired: false };
+        return { fired: true, strength: 0.5 + 0.4 * div.strength };
+      }
     }
   ];
 
